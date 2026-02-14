@@ -430,47 +430,4 @@ function readIncremental(filePath) {
 { type: 'session_remove', sessionId }  // 移除 session
 ```
 
-## 十五、给下一个 Claude Code 的提示词
 
-复制以下内容作为提示词，在 Nexus 项目根目录下启动新的 Claude Code session：
-
----
-
-请阅读 `agent-arena-monitor-spec.md`，这是 Nexus 项目的完整开发规格文档。
-
-你的任务是从零开始搭建项目架构并实现 Phase 1（只做 Claude Code 支持）。
-
-第零步：初始化 Git 仓库
-- `git init` 初始化本地仓库
-- 创建 `.gitignore`（至少包含 `node_modules/`）
-- 用 `gh repo create Nexus --public --source=. --push` 创建远程仓库并推送（如果远程已存在则跳过，直接关联）
-
-第一步：初始化项目
-- 在当前目录（Nexus 根目录）创建 `package.json`、`server.js`、`public/index.html`
-- 依赖只需要 `ws`（WebSocket 库），然后 `npm install`
-
-第二步：按文档第十四节的 Step 1 → Step 5 顺序实现
-- 文档中有详细的实现步骤、关键技术细节、WebSocket 消息协议
-- 每完成一个 Step 后，必须先测试验证功能正常，再 commit。commit message 写清楚这个 Step 做了什么
-- 不要一口气写完所有代码再测试，逐步推进、逐步验证
-
-第三步：全面测试
-- 所有 Step 完成后，从头到尾做一次完整的端到端测试
-- 测试场景包括：
-  - 启动 Monitor，确认能发现已有的活跃 Claude Code session
-  - 新开一个 Claude Code session，确认自动出现
-  - 在 Claude Code 中对话，确认实时更新
-  - 关闭 Claude Code，确认卡片淡出消失
-  - 同时开多个 session，确认错开入场、网格排列正常
-  - 刷新浏览器页面，确认能重新加载所有活跃 session
-  - 长时间无操作后恢复，确认状态机正确
-- 全部测试通过后，做最终 commit 并 push 到远程
-
-完成标准：
-1. `npm start` 启动服务，浏览器打开后能看到当前活跃的 Claude Code session
-2. 新开一个 Claude Code session，页面自动出现新卡片（弹性入场）
-3. 在 Claude Code 中对话，卡片内实时显示新消息
-4. 关闭 Claude Code，卡片缓慢淡出消失
-5. 多个 session 同时存在时，错开入场、网格排列
-
----

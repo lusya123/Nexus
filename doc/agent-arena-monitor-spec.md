@@ -239,7 +239,6 @@ IDLE 状态停止脉动，视觉上安静下来。
 - 不做调度和控制，只看不操作
 - 不做远程连接，只看本机
 - 不做数据库，数据源就是 JSONL 文件
-- 不做构建流程，前端一个 HTML 文件
 - 不解析工具调用细节，tool_calls 只显示摘要
 - 不要求用户配置环境变量或命名规范，零配置启动
 - 不手动 pin/dismiss 卡片，全自动生命周期管理
@@ -298,7 +297,7 @@ Monitor 忠实反映"进程是否在运行"这个事实。session 的输出是�
 4. 管理 session 状态机
 5. 通过 WebSocket 推送到浏览器
 
-前端是一个纯 HTML 文件，通过 WebSocket 接收数据并渲染。
+前端使用 React + TypeScript，通过 WebSocket 接收数据并渲染。
 
 ## 十一、分阶段
 
@@ -335,15 +334,21 @@ Monitor 忠实反映"进程是否在运行"这个事实。session 的输出是�
 
 ```
 Nexus/
-├── package.json       # 依赖：仅 ws（WebSocket 库）
+├── package.json       # 后端依赖：express, ws
 ├── server.js          # Node.js 服务端（全部后端逻辑）
-├── public/
-│   └── index.html     # 前端单文件（HTML + CSS + JS 内联）
-├── agent-arena-monitor-spec.md      # 本文档（开发规格）
-└── agent-arena-monitor-requirements.md  # 原始需求文档（参考）
+├── client/            # React + TypeScript 前端
+│   ├── package.json   # 前端依赖
+│   ├── src/
+│   └── ...
+├── doc/
+│   ├── agent-arena-monitor-spec.md      # 本文档（开发规格）
+│   └── agent-arena-monitor-requirements.md  # 原始需求文档（参考）
+└── .gitignore
 ```
 
-不需要构建工具、不需要框架、不需要 TypeScript。保持最简。
+**技术栈**：
+- 后端：Node.js + Express + ws
+- 前端：React + TypeScript + Vite
 
 ## 十四、Phase 1 实现指南
 
@@ -380,14 +385,15 @@ Phase 1 只做 Claude Code，以下是实现顺序：
 5. 冷却时间到 → 设为 GONE，通知前端移除
 6. 状态变化时通过 WebSocket 推送给前端
 
-### Step 5：前端 index.html
+### Step 5：前端 React 应用
 
-1. 连接 WebSocket
-2. 收到 session 数据后渲染卡片（网格布局）
-3. 收到增量消息后追加到对应卡片，自动滚到底部
-4. 收到状态变化后更新卡片样式（ACTIVE 呼吸灯、COOLING 淡出）
-5. 实现错开入场队列
-6. 实现弹性入场 / 缓慢淡出 CSS 动画
+1. 使用 Vite 创建 React + TypeScript 项目
+2. 实现 WebSocket 连接和消息处理
+3. 实现 session 卡片组件（网格布局）
+4. 收到增量消息后追加到对应卡片，自动滚到底部
+5. 收到状态变化后更新卡片样式（ACTIVE 呼吸灯、COOLING 淡出）
+6. 实现错开入场队列
+7. 实现弹性入场 / 缓慢淡出动画（CSS 或 Framer Motion）
 
 ### 关键技术细节
 
@@ -429,5 +435,321 @@ function readIncremental(filePath) {
 { type: 'state_change', sessionId, state: 'active|idle|cooling|gone' } // 状态变化
 { type: 'session_remove', sessionId }  // 移除 session
 ```
+
+## 十五、开发与测试流程
+
+### 15.1 增量开发原则
+
+**一个 Feature 一个 Feature 写，写完一个测一个。**
+
+开发顺序严格按照 Phase 1 实现指南的 Step 1-5 进行，每完成一个 Step 立即测试验证，确保功能正常后再进入下一个 Step。
+
+### 15.2 各 Feature 测试方法
+
+#### Step 1 测试：基础骨架
+
+**测试目标**：验证服务端启动和 WebSocket 连接。
+
+**测试步骤**：
+1. 启动服务端：`node server.js`
+2. 浏览器访问 `http://localhost:3000`（或配置的端口）
+3. 打开浏览器开发者工具，查看 WebSocket 连接状态
+4. 验证 WebSocket 连接成功建立
+
+**通过标准**：
+- 服务端正常启动，无报错
+- WebSocket 连接状态为 `OPEN`
+- 控制台无连接错误
+
+#### Step 2 测试：文件发现与监听
+
+**测试目标**：验证文件扫描和实时监听功能。
+
+**测试步骤**：
+1. 确保有至少一个活跃的 Claude Code session（打开一个项目）
+2. 启动服务端，查看控制台输出
+3. 验证服务端发现了现有的 JSONL 文件
+4. 在 Claude Code 中发送一条消息
+5. 查看服务端控制台，验证文件修改被检测到
+6. 验证新消息被解析并通过 WebSocket 推送
+
+**通过标准**：
+- 服务端启动时正确扫描并列出所有 JSONL 文件
+- 文件修改时触发 `fs.watch` 事件
+- 增量读取正确（只读取新增内容，不重新解析整个文件）
+- 解析出的消息格式正确（role + content）
+- WebSocket 推送消息到前端
+
+**调试技巧**：
+- 在服务端添加 `console.log` 输出文件路径和解析结果
+- 使用 `ls ~/.claude/projects/` 确认目录结构
+- 手动查看 JSONL 文件内容，对比解析结果
+
+#### Step 3 测试：进程扫描
+
+**测试目标**：验证进程检测和 session 映射。
+
+**测试步骤**：
+1. 打开 2-3 个不同项目的 Claude Code session
+2. 启动服务端，等待进程扫描执行（15 秒）
+3. 查看服务端控制台，验证检测到的进程和工作目录
+4. 关闭其中一个 Claude Code session
+5. 等待下一次进程扫描，验证该 session 被标记为进程退出
+
+**通过标准**：
+- `lsof` 命令正确执行，无报错
+- PID → CWD 映射正确
+- CWD 编码规则正确（路径转换为目录名）
+- 进程退出时能正确检测到
+
+**调试技巧**：
+- 手动执行 `lsof -c claude -a -d cwd -F pcn` 查看输出格式
+- 打印 PID、CWD、编码后的目录名，逐步验证映射逻辑
+- 使用 `ps aux | grep claude` 辅助验证进程状态
+
+#### Step 4 测试：状态机
+
+**测试目标**：验证 session 状态转换逻辑。
+
+**测试步骤**：
+1. 打开一个 Claude Code session，发送消息 → 验证状态为 ACTIVE
+2. 停止发送消息，等待 2 分钟 → 验证状态变为 IDLE
+3. 再次发送消息 → 验证状态回到 ACTIVE
+4. 关闭 Claude Code → 验证状态变为 COOLING
+5. 等待冷却时间结束 → 验证状态变为 GONE，session 被移除
+
+**通过标准**：
+- 状态转换时机正确
+- 冷却时间计算正确（活跃时长的 10%，限制在 3 秒 ~ 5 分钟）
+- 状态变化时通过 WebSocket 推送给前端
+- GONE 状态后 session 从内存中移除
+
+**调试技巧**：
+- 在状态转换时打印日志：`[Session ${id}] ${oldState} → ${newState}`
+- 打印冷却时间计算过程
+- 使用较短的测试时间（如 10 秒代替 2 分钟）加速测试
+
+#### Step 5 测试：前端 React 应用
+
+**测试目标**：验证前端展示和动画效果。
+
+**测试步骤**：
+1. 启动前端开发服务器：`cd client && npm run dev`
+2. 浏览器访问前端页面
+3. 验证现有 session 正确显示（网格布局）
+4. 打开新的 Claude Code session → 验证卡片弹性入场动画
+5. 发送消息 → 验证消息实时追加，自动滚动到底部
+6. 验证 ACTIVE 状态的呼吸灯效果
+7. 同时打开 3 个 session → 验证错开入场（150ms 间隔）
+8. 关闭一个 session → 验证淡出动画
+
+**通过标准**：
+- WebSocket 连接正常
+- session 卡片正确渲染（工具类型、名称、时间）
+- 消息列表正确显示 user/assistant 对话
+- 入场动画流畅（弹性效果）
+- 呼吸灯动画正常（ACTIVE 状态）
+- 淡出动画正常（COOLING 状态）
+- 错开入场效果明显
+
+**调试技巧**：
+- 使用 React DevTools 查看组件状态
+- 在浏览器控制台查看 WebSocket 消息
+- 使用 CSS 动画调试工具查看动画效果
+- 调整动画时长（如 0.1s）加速测试
+
+### 15.3 全面测试
+
+完成所有 Step 后，进行端到端的全面测试。
+
+#### 测试场景 1：单 Session 完整生命周期
+
+1. 启动服务端和前端
+2. 打开一个 Claude Code session
+3. 验证卡片出现（弹性入场）
+4. 发送 5-10 条消息，验证实时更新
+5. 停止发送消息 2 分钟，验证状态变为 IDLE（呼吸灯停止）
+6. 再次发送消息，验证状态回到 ACTIVE
+7. 关闭 Claude Code，验证淡出动画
+8. 等待冷却时间结束，验证卡片消失
+
+#### 测试场景 2：多 Session 并发
+
+1. 同时打开 5 个不同项目的 Claude Code session
+2. 验证 5 个卡片依次入场（错开 150ms）
+3. 在不同 session 中随机发送消息
+4. 验证每个卡片独立更新，互不干扰
+5. 关闭其中 2 个 session，验证只有对应卡片淡出
+6. 再打开 3 个新 session，验证新卡片正确入场
+
+#### 测试场景 3：长时间运行
+
+1. 启动服务端和前端
+2. 打开 2-3 个 Claude Code session
+3. 持续运行 30 分钟以上
+4. 期间随机发送消息、打开/关闭 session
+5. 验证无内存泄漏（查看服务端内存占用）
+6. 验证 WebSocket 连接稳定（无断线重连）
+7. 验证文件监听正常（无遗漏消息）
+
+#### 测试场景 4：边界情况
+
+1. **空状态**：启动时没有任何 Claude Code session，验证页面显示正常
+2. **快速开关**：快速打开并立即关闭 session（< 3 秒），验证冷却时间最小值生效
+3. **长对话**：运行一个 session 超过 1 小时，验证冷却时间最大值生效（5 分钟）
+4. **大量消息**：在一个 session 中发送 100+ 条消息，验证性能正常
+5. **文件损坏**：手动修改 JSONL 文件（添加非法 JSON），验证容错处理
+6. **进程异常**：强制 kill Claude Code 进程，验证进程扫描能检测到
+
+### 15.4 E2E 测试（端到端自动化测试）
+
+完成所有功能开发和手动测试后，必须进行 E2E 自动化测试，确保最终交付的质量。
+
+#### 测试工具
+
+使用 **Puppeteer MCP server** 进行浏览器自动化测试。Puppeteer 可以模拟真实用户操作，验证前端界面和交互逻辑。
+
+#### E2E 测试场景
+
+**场景 1：首次启动和 Session 发现**
+```javascript
+// 1. 启动服务端和前端
+// 2. 打开浏览器访问前端页面
+// 3. 验证页面正常加载
+// 4. 验证 WebSocket 连接成功
+// 5. 验证现有 Claude Code session 自动显示
+// 6. 验证卡片内容正确（名称、时间、消息）
+```
+
+**场景 2：实时消息更新**
+```javascript
+// 1. 页面已打开，显示一个 session
+// 2. 在 Claude Code 中发送一条消息
+// 3. 等待 1-2 秒
+// 4. 验证前端页面自动更新，新消息出现
+// 5. 验证消息内容正确
+// 6. 验证自动滚动到底部
+```
+
+**场景 3：新 Session 入场动画**
+```javascript
+// 1. 页面已打开
+// 2. 打开一个新的 Claude Code session
+// 3. 验证新卡片出现
+// 4. 验证弹性入场动画执行（检查 CSS 动画类名）
+// 5. 验证卡片位置正确（网格布局）
+```
+
+**场景 4：多 Session 错开入场**
+```javascript
+// 1. 页面已打开，无 session
+// 2. 快速打开 3 个 Claude Code session
+// 3. 验证 3 个卡片依次出现（不是同时）
+// 4. 测量入场时间间隔（应约为 150ms）
+// 5. 验证最终 3 个卡片都正确显示
+```
+
+**场景 5：状态转换（ACTIVE → IDLE）**
+```javascript
+// 1. 页面显示一个 ACTIVE 状态的 session
+// 2. 验证呼吸灯动画存在（检查 CSS 类名或动画）
+// 3. 等待 2 分钟（或使用缩短的测试时间）
+// 4. 验证状态变为 IDLE
+// 5. 验证呼吸灯动画停止
+```
+
+**场景 6：Session 退出和淡出**
+```javascript
+// 1. 页面显示一个 session
+// 2. 关闭对应的 Claude Code session
+// 3. 等待进程扫描周期（15 秒）
+// 4. 验证卡片开始淡出动画
+// 5. 等待冷却时间结束
+// 6. 验证卡片从页面消失
+```
+
+**场景 7：长时间运行稳定性**
+```javascript
+// 1. 启动服务端和前端
+// 2. 打开 2 个 Claude Code session
+// 3. 每隔 30 秒发送一条消息
+// 4. 持续运行 10 分钟
+// 5. 验证无内存泄漏（监控浏览器内存）
+// 6. 验证 WebSocket 连接稳定（无断线）
+// 7. 验证所有消息都正确显示
+```
+
+**场景 8：边界情况 - 空状态**
+```javascript
+// 1. 确保没有任何 Claude Code session 运行
+// 2. 启动服务端和前端
+// 3. 打开浏览器访问页面
+// 4. 验证页面正常显示（空状态）
+// 5. 验证无 JavaScript 错误
+// 6. 打开一个新 session
+// 7. 验证卡片正确出现
+```
+
+**场景 9：网络重连**
+```javascript
+// 1. 页面已打开，显示 session
+// 2. 重启服务端（模拟网络中断）
+// 3. 验证前端检测到 WebSocket 断开
+// 4. 服务端重启完成后
+// 5. 验证前端自动重连
+// 6. 验证 session 状态恢复正常
+```
+
+#### E2E 测试实现建议
+
+1. **创建测试脚本目录**：`tests/e2e/`
+2. **使用 Puppeteer MCP server** 编写自动化测试脚本
+3. **测试脚本结构**：
+   ```javascript
+   // tests/e2e/session-lifecycle.test.js
+   describe('Session Lifecycle', () => {
+     test('should display existing sessions on load', async () => {
+       // 测试逻辑
+     });
+
+     test('should show new session with animation', async () => {
+       // 测试逻辑
+     });
+
+     // ... 更多测试
+   });
+   ```
+
+4. **测试辅助工具**：
+   - 创建测试用的 Claude Code session 启动脚本
+   - 创建清理测试数据的脚本
+   - 使用 Puppeteer 的截图功能记录测试过程
+
+5. **CI/CD 集成**（可选）：
+   - 在 GitHub Actions 中运行 E2E 测试
+   - 每次 commit 前自动执行测试
+
+#### E2E 测试通过标准
+
+- ✅ 所有 9 个 E2E 测试场景通过
+- ✅ 测试覆盖率达到核心功能的 100%
+- ✅ 测试可重复执行，结果稳定
+- ✅ 测试脚本有清晰的注释和文档
+- ✅ 发现的 bug 都已修复并添加回归测试
+
+### 15.5 测试通过标准
+
+Phase 1 完成的标准：
+
+- ✅ 所有 5 个 Step 的单元测试通过
+- ✅ 4 个全面测试场景全部通过
+- ✅ **所有 E2E 自动化测试通过**
+- ✅ 无明显 bug 或性能问题
+- ✅ 代码可读性良好，关键逻辑有注释
+- ✅ 服务端和前端都能正常启动，无报错
+
+**重要**：E2E 测试是最终交付的必要条件。只有通过完整的 E2E 测试，才能确保产品质量，Phase 1 才算真正完成。
+
+达到以上标准后，Phase 1 才算真正完成，可以进入 Phase 2。
 
 

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nexus - Agent Arena Monitor</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+    }
+    h1 {
+      margin: 0 0 20px 0;
+      font-size: 24px;
+      font-weight: 600;
+    }
+    #status {
+      padding: 10px 15px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+    #status.connected {
+      background: #1a3a1a;
+      color: #4ade80;
+      border: 1px solid #22c55e;
+    }
+    #status.disconnected {
+      background: #3a1a1a;
+      color: #f87171;
+      border: 1px solid #ef4444;
+    }
+    #sessions {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+      gap: 20px;
+    }
+    .session-card {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 15px;
+    }
+    .session-header {
+      font-weight: 600;
+      margin-bottom: 10px;
+      color: #60a5fa;
+    }
+  </style>
+</head>
+<body>
+  <h1>Nexus - Agent Arena Monitor</h1>
+  <div id="status" class="disconnected">Connecting to WebSocket...</div>
+  <div id="sessions"></div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const sessionsEl = document.getElementById('sessions');
+
+    let ws;
+
+    function connect() {
+      ws = new WebSocket('ws://localhost:3000');
+
+      ws.onopen = () => {
+        console.log('WebSocket connected');
+        statusEl.textContent = 'Connected';
+        statusEl.className = 'connected';
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log('Received:', data);
+
+        if (data.type === 'init') {
+          console.log('Initial sessions:', data.sessions);
+          // Will render sessions in later steps
+        }
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        statusEl.textContent = 'Disconnected - Reconnecting...';
+        statusEl.className = 'disconnected';
+        setTimeout(connect, 2000);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+    }
+
+    connect();
+  </script>
+</body>
+</html>

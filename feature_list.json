@@ -1,0 +1,157 @@
+[
+  {
+    "id": "P1-01",
+    "category": "infrastructure",
+    "description": "HTTP server serves public/index.html, WebSocket server accepts connections",
+    "phase": 1,
+    "steps": [
+      "npm start launches server on port 3000",
+      "Browser opens http://localhost:3000 and sees the page",
+      "WebSocket connection established"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-02",
+    "category": "functional",
+    "description": "Scan ~/.claude/projects/ to discover JSONL files from active Claude Code sessions",
+    "phase": 1,
+    "steps": [
+      "Server scans ~/.claude/projects/*/*.jsonl on startup",
+      "Filters to recently modified files",
+      "Logs discovered sessions"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-03",
+    "category": "functional",
+    "description": "Incremental JSONL parsing - read only new bytes from file, parse user/assistant messages",
+    "phase": 1,
+    "steps": [
+      "Track byte offset per file",
+      "On file change, read only new bytes",
+      "Parse each line as JSON, extract role=user and role=assistant messages",
+      "Handle content as string or array",
+      "Skip unknown lines gracefully"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-04",
+    "category": "functional",
+    "description": "fs.watch monitors directories for new files and file modifications",
+    "phase": 1,
+    "steps": [
+      "Watch ~/.claude/projects/ subdirectories",
+      "Detect new JSONL files created",
+      "Detect modifications to existing JSONL files",
+      "Trigger incremental read on change"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-05",
+    "category": "functional",
+    "description": "Process scanning with lsof to detect running Claude Code processes",
+    "phase": 1,
+    "steps": [
+      "Run lsof -c claude every 15 seconds",
+      "Parse PID and CWD from output",
+      "Map CWD to ~/.claude/projects/ encoded path",
+      "Identify which sessions have live processes"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-06",
+    "category": "functional",
+    "description": "Session state machine: ACTIVE → IDLE → COOLING → GONE",
+    "phase": 1,
+    "steps": [
+      "New session starts as ACTIVE",
+      "2 min no modification + process alive → IDLE",
+      "Process exits → COOLING with dynamic cooldown",
+      "Cooldown expires → GONE, removed from page",
+      "File modification resets to ACTIVE"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-07",
+    "category": "functional",
+    "description": "WebSocket pushes session_init, message_add, state_change, session_remove to browser",
+    "phase": 1,
+    "steps": [
+      "New client receives all active sessions via session_init",
+      "New messages sent as message_add",
+      "State transitions sent as state_change",
+      "GONE sessions trigger session_remove"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-08",
+    "category": "frontend",
+    "description": "Grid layout displays session cards sorted by last activity",
+    "phase": 1,
+    "steps": [
+      "Cards arranged in responsive CSS grid",
+      "Sorted by lastActivity descending",
+      "Card shows tool icon + session name + last activity time",
+      "Blue color scheme for Claude Code"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-09",
+    "category": "frontend",
+    "description": "Real-time message rendering in cards with auto-scroll",
+    "phase": 1,
+    "steps": [
+      "User messages styled differently from assistant messages",
+      "New messages append to card content",
+      "Card auto-scrolls to bottom on new message"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-10",
+    "category": "frontend",
+    "description": "Visual buffer system: staggered entry, elastic animation, breathing pulse, fade-out exit",
+    "phase": 1,
+    "steps": [
+      "Multiple sessions entering are staggered 150ms apart",
+      "Cards enter with elastic bounce animation",
+      "ACTIVE cards have breathing pulse border",
+      "COOLING cards fade out slowly",
+      "Fade-out duration matches cooldown time"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-11",
+    "category": "functional",
+    "description": "New Claude Code session auto-discovered without page refresh",
+    "phase": 1,
+    "steps": [
+      "Start a new Claude Code session",
+      "Monitor detects new JSONL file via fs.watch",
+      "Card appears on page automatically"
+    ],
+    "passes": true
+  },
+  {
+    "id": "P1-12",
+    "category": "functional",
+    "description": "Closing Claude Code causes card to fade out and disappear",
+    "phase": 1,
+    "steps": [
+      "Close a Claude Code session",
+      "Process scan detects process gone",
+      "Card enters COOLING state with fade animation",
+      "After cooldown, card removed"
+    ],
+    "passes": true
+  }
+]

@@ -1,6 +1,23 @@
 // Store active sessions
 const sessions = new Map();
 
+import fs from 'fs';
+import { sessionLogger } from './utils/logger.js';
+
+// Codex doesn't expose reliable per-session process markers; use file mtime as an activity signal.
+const CODEX_ACTIVE_MTIME_GRACE_MS = 5 * 60 * 1000; // 5 minutes
+// Claude: prefer lsof-mapped active files, but keep recently-updated sessions visible after the process exits.
+const CLAUDE_RECENT_MTIME_GRACE_MS = 30 * 60 * 1000; // 30 minutes
+
+function isRecentlyModified(filePath, graceMs) {
+  try {
+    const stat = fs.statSync(filePath);
+    return (Date.now() - stat.mtimeMs) <= graceMs;
+  } catch {
+    return false;
+  }
+}
+
 // Clean session object for JSON serialization (remove non-serializable fields)
 export function cleanSession(session) {
   const { cooldownTimer, ...cleanedSession } = session;
@@ -65,14 +82,14 @@ export function setSessionState(sessionId, newState, onStateChange) {
   const oldState = session.state;
   session.state = newState;
 
-  console.log(`Session ${sessionId.substring(0, 8)}: ${oldState} → ${newState}`);
-
   // Handle state-specific logic
   if (newState === 'cooling') {
     session.endTime = Date.now();
     const cooldownDuration = getCooldownDuration(session);
 
-    console.log(`  Cooldown: ${(cooldownDuration / 1000).toFixed(1)}s`);
+    sessionLogger.sessionStateChange(sessionId, oldState, newState, {
+      cooldownSeconds: (cooldownDuration / 1000).toFixed(1)
+    });
 
     // Set timer to remove session after cooldown
     session.cooldownTimer = setTimeout(() => {
@@ -89,8 +106,10 @@ export function setSessionState(sessionId, newState, onStateChange) {
       onStateChange(sessionId, newState, { removed: true });
     }
 
-    console.log(`  Session removed`);
+    sessionLogger.sessionRemoved(sessionId);
     return;
+  } else {
+    sessionLogger.sessionStateChange(sessionId, oldState, newState);
   }
 
   // Notify state change
@@ -117,11 +136,16 @@ export function checkIdleSessions(onStateChange) {
 // Check which sessions have their processes still running
 export function checkSessionProcesses(activeProjectDirs, onStateChange, options = {}) {
   const activeOpenClawFiles = options.activeOpenClawFiles || null;
+  const activeClaudeFiles = options.activeClaudeFiles || null;
 
   for (const [sessionId, session] of sessions.entries()) {
     const hasProcess = (session.tool === 'openclaw' && activeOpenClawFiles)
       ? activeOpenClawFiles.has(session.filePath)
-      : activeProjectDirs.has(session.projectDir);
+      : (session.tool === 'claude-code' && activeClaudeFiles)
+        ? (activeClaudeFiles.has(session.filePath) || isRecentlyModified(session.filePath, CLAUDE_RECENT_MTIME_GRACE_MS))
+      : (session.tool === 'codex')
+        ? isRecentlyModified(session.filePath, CODEX_ACTIVE_MTIME_GRACE_MS)
+        : activeProjectDirs.has(session.projectDir);
 
     if (!hasProcess && (session.state === 'active' || session.state === 'idle')) {
       // Process exited, move to COOLING

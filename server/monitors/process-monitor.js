@@ -7,12 +7,38 @@ const execAsync = promisify(exec);
 // Track active processes (PID -> project directory)
 const activeProcesses = new Map();
 
+function isUnderDir(child, parent) {
+  const rel = path.relative(path.resolve(parent), path.resolve(child));
+  return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+function extractOpenJsonlFilesFromLsof(lsofOutput, { restrictUnderDir } = {}) {
+  const out = new Set();
+  const lines = (lsofOutput || '').split('\n');
+
+  // With `lsof -Fn`, file names are emitted as lines like: `n/absolute/path`.
+  for (const line of lines) {
+    if (!line.startsWith('n')) continue;
+    const name = line.slice(1).trim();
+    if (!name) continue;
+    if (!name.endsWith('.jsonl')) continue;
+    if (name.includes('.jsonl.deleted.')) continue;
+    const p = path.resolve(name);
+    if (restrictUnderDir && !isUnderDir(p, restrictUnderDir)) continue;
+    out.add(p);
+  }
+
+  return Array.from(out);
+}
+
 // Scan for active Claude Code processes
 export async function scanProcesses(toolName, projectsDir, encodeCwdFn) {
   try {
     // Get all processes for the specified tool (excluding our own server)
-    const { stdout } = await execAsync(`ps aux | grep " ${toolName}" | grep -v grep | grep -v "node server" | grep -v "node /Users"`);
-    const lines = stdout.trim().split('\n').filter(line => line.trim());
+    const { stdout } = await execAsync(
+      `ps aux | grep " ${toolName}" | grep -v grep | grep -v "node server" | grep -v "node /Users" || true`
+    );
+    const lines = (stdout || '').trim().split('\n').filter(line => line.trim());
 
     const newProcesses = new Map();
 
@@ -32,7 +58,15 @@ export async function scanProcesses(toolName, projectsDir, encodeCwdFn) {
           const encodedCwd = encodeCwdFn(cwd);
           const projectDir = path.resolve(path.join(projectsDir, encodedCwd));
 
-          newProcesses.set(pid, { cwd, projectDir, toolName });
+          let sessionFiles = [];
+          try {
+            const { stdout: lsofNames } = await execAsync(`lsof -p ${pid} -Fn 2>/dev/null || true`);
+            sessionFiles = extractOpenJsonlFilesFromLsof(lsofNames, { restrictUnderDir: projectDir });
+          } catch {
+            // ignore
+          }
+
+          newProcesses.set(pid, { cwd, projectDir, toolName, sessionFiles });
 
           // If this is a new process, log it
           if (!activeProcesses.has(pid)) {
@@ -64,14 +98,13 @@ export async function scanProcesses(toolName, projectsDir, encodeCwdFn) {
       activeProcesses.set(pid, { ...info, toolName });
     }
 
-    console.log(`Active ${toolName} processes: ${activeProcesses.size}`);
+    console.log(`Active ${toolName} processes: ${newProcesses.size}`);
 
     return newProcesses;
   } catch (error) {
-    // No claude processes found or command failed
-    if (activeProcesses.size > 0) {
-      console.log('No active Claude processes found');
-      activeProcesses.clear();
+    // Command failed; clear only this tool's tracked processes.
+    for (const [pid, info] of activeProcesses.entries()) {
+      if (info.toolName === toolName) activeProcesses.delete(pid);
     }
     return new Map();
   }

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import './App.css'
+import { logger, wsLogger, sessionLogger } from './utils/logger'
 
 interface Message {
   role: 'user' | 'assistant';
@@ -49,23 +50,24 @@ function App() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('WebSocket connected');
+        wsLogger.wsConnected();
         setConnectionStatus('connected');
       };
 
       ws.onmessage = (event) => {
         const message = JSON.parse(event.data);
+        wsLogger.wsMessage(message.type, { sessionId: message.sessionId?.substring(0, 12) });
         handleMessage(message);
       };
 
       ws.onclose = () => {
-        console.log('WebSocket disconnected');
+        wsLogger.wsDisconnected(true);
         setConnectionStatus('disconnected');
         setTimeout(connect, 2000);
       };
 
       ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        wsLogger.wsError(error);
       };
     };
 
@@ -97,6 +99,7 @@ function App() {
         newSessions.set(session.sessionId, session);
       });
       setSessions(newSessions);
+      logger.info('Initialized sessions', { count: message.sessions.length });
 
       entryQueueRef.current = message.sessions.filter(
         (s: Session) => s.state === 'active' || s.state === 'idle'
@@ -110,6 +113,7 @@ function App() {
         state: message.state || 'active'
       };
 
+      sessionLogger.sessionInit(session.sessionId, session.tool, session.name, session.messages.length);
       setSessions(prev => new Map(prev).set(session.sessionId, session));
       entryQueueRef.current.push(session);
     } else if (message.type === 'message_add') {
@@ -117,6 +121,7 @@ function App() {
         const newSessions = new Map(prev);
         const session = newSessions.get(message.sessionId);
         if (session) {
+          sessionLogger.messageAdded(message.sessionId, message.message.role, message.message.content.length);
           newSessions.set(message.sessionId, {
             ...session,
             messages: [...session.messages, message.message]
@@ -129,12 +134,14 @@ function App() {
         const newSessions = new Map(prev);
         const session = newSessions.get(message.sessionId);
         if (session) {
+          sessionLogger.sessionStateChange(message.sessionId, session.state, message.state);
           session.state = message.state;
           newSessions.set(message.sessionId, { ...session });
         }
         return newSessions;
       });
     } else if (message.type === 'session_remove') {
+      sessionLogger.sessionRemoved(message.sessionId);
       setSessions(prev => {
         const newSessions = new Map(prev);
         newSessions.delete(message.sessionId);
@@ -184,8 +191,8 @@ function App() {
 
       {visibleSessions.length === 0 && connectionStatus === 'connected' && (
         <div className="empty-state">
-          <p>No active Claude Code sessions</p>
-          <p className="hint">Open a Claude Code session to see it here</p>
+          <p>No active sessions</p>
+          <p className="hint">Open a Claude Code, Codex, or OpenClaw session to see it here</p>
         </div>
       )}
     </div>
@@ -248,6 +255,10 @@ function SessionCard({ session, showToolEvents }: { session: Session; showToolEv
     .filter(m => (m.content || '').trim().length > 0)
     .filter(m => showToolEvents || getMessageKind(m.content) === 'text');
 
+  const hiddenToolEventCount = showToolEvents
+    ? 0
+    : session.messages.filter(m => (m.content || '').trim().length > 0 && getMessageKind(m.content) !== 'text').length;
+
   useEffect(() => {
     const timer = setTimeout(() => setIsEntering(false), 400);
     return () => clearTimeout(timer);
@@ -285,6 +296,14 @@ function SessionCard({ session, showToolEvents }: { session: Session; showToolEv
             <ToolEvent key={idx} content={msg.content} />
           )
         ))}
+        {visibleMessages.length === 0 && hiddenToolEventCount > 0 && (
+          <div className="message message-assistant">
+            <div className="message-role">Info</div>
+            <div className="message-content">
+              No text messages yet. Enable Tool events to view {hiddenToolEventCount} tool events.
+            </div>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
     </div>

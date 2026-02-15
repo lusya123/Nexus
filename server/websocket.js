@@ -1,4 +1,5 @@
 import { WebSocketServer } from 'ws';
+import { wsLogger } from './utils/logger.js';
 
 let wss = null;
 
@@ -7,16 +8,11 @@ export function initWebSocket(server, getSessionsFn) {
   wss = new WebSocketServer({ server });
 
   wss.on('connection', (ws) => {
-    console.log('Client connected');
-
     // Send current state to newly connected client (dynamically fetch)
     const sessions = getSessionsFn();
-    console.log(`Sending ${sessions.length} sessions to client`);
 
-    // Debug: log first session to check format
-    if (sessions.length > 0) {
-      console.log('Sample session:', JSON.stringify(sessions[0], null, 2));
-    }
+    wsLogger.wsConnection('connected', wss.clients.size);
+    wsLogger.debug('Sending initial state to client', { sessionCount: sessions.length });
 
     ws.send(JSON.stringify({
       type: 'init',
@@ -24,11 +20,11 @@ export function initWebSocket(server, getSessionsFn) {
     }));
 
     ws.on('close', () => {
-      console.log('Client disconnected');
+      wsLogger.wsConnection('disconnected', wss.clients.size);
     });
 
     ws.on('error', (error) => {
-      console.error('WebSocket error:', error);
+      wsLogger.error('WebSocket error', { error: error.message });
     });
   });
 
@@ -42,7 +38,11 @@ export function broadcast(message) {
   const data = JSON.stringify(message);
   const clientCount = wss.clients.size;
 
-  console.log(`Broadcasting ${message.type} to ${clientCount} clients`);
+  wsLogger.debug('Broadcasting message', {
+    type: message.type,
+    clients: clientCount,
+    sessionId: message.sessionId?.substring(0, 12)
+  });
 
   wss.clients.forEach((client) => {
     if (client.readyState === 1) { // OPEN

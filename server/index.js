@@ -12,6 +12,7 @@ import * as OpenClawParser from './parsers/openclaw.js';
 import * as FileMonitor from './monitors/file-monitor.js';
 import * as ProcessMonitor from './monitors/process-monitor.js';
 import * as SessionManager from './session-manager.js';
+import { logger, sessionLogger, fileLogger, processLogger } from './utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,20 +30,22 @@ const server = createServer(app);
 let activeProjectDirs = new Set();
 
 // Heuristics for "currently running" sessions:
-// - Claude Code: if a process is running for a project dir, load the most recently modified N JSONL files.
+// - Claude Code: prefer `lsof`-discovered open `.jsonl` files per PID. If unavailable, fall back to "newest 1 JSONL per active dir".
 // - OpenClaw: treat `.jsonl.lock` files as authoritative "active session" markers.
-const RECENT_SESSION_MAX_FILES_PER_DIR = 25;
+const CLAUDE_RECENT_MAX_FILES_PER_DIR = 5;
+const CLAUDE_RECENT_MTIME_GRACE_MS = 30 * 60 * 1000; // keep recently-updated sessions visible after exit
 
 // Process a JSONL file
 function processFile(filePath, parser, toolName) {
+  // Normalize early so all downstream maps/sets compare correctly.
+  filePath = path.resolve(filePath);
+
   const sessionId = parser.getSessionId(filePath);
   const projectDir = path.resolve(path.dirname(filePath));
   const projectName = parser.getProjectName(path.dirname(filePath));
 
   // Check if this is a new session
   if (!SessionManager.getSession(sessionId)) {
-    console.log(`New session discovered: ${sessionId} (${projectName}) [${toolName}]`);
-
     const session = SessionManager.createSession(
       sessionId,
       toolName,
@@ -54,6 +57,8 @@ function processFile(filePath, parser, toolName) {
     // Read all existing messages
     const messages = FileMonitor.readIncremental(filePath, parser.parseMessage);
     SessionManager.addMessages(sessionId, messages);
+
+    sessionLogger.sessionDiscovered(sessionId, projectName, toolName, filePath);
 
     // Broadcast new session
     broadcast({
@@ -86,7 +91,7 @@ function processFile(filePath, parser, toolName) {
         });
       });
 
-      console.log(`Session ${sessionId} [${toolName}]: +${messages.length} messages`);
+      sessionLogger.sessionMessages(sessionId, toolName, messages.length);
     }
   }
 }
@@ -104,13 +109,36 @@ function isUnderDir(child, parent) {
   return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-function loadClaudeSessionsForProjectDir(projectDir) {
-  // We can't reliably map a running Claude process to a single session file, so when a project dir is active
-  // we load the newest N session files from that dir.
-  const files = FileMonitor.getSessionFilesByMtime(projectDir).slice(0, RECENT_SESSION_MAX_FILES_PER_DIR);
-  for (const filePath of files) {
-    processFile(filePath, ClaudeCodeParser, 'claude-code');
+function loadClaudeSessionsForProjectDir(projectDir, activeClaudeFiles) {
+  const dir = path.resolve(projectDir);
+  const activeInDir = [];
+  if (activeClaudeFiles && activeClaudeFiles.size > 0) {
+    for (const filePath of activeClaudeFiles) {
+      if (path.resolve(path.dirname(filePath)) === dir) activeInDir.push(filePath);
+    }
   }
+
+  if (activeInDir.length > 0) {
+    for (const filePath of activeInDir) {
+      processFile(filePath, ClaudeCodeParser, 'claude-code');
+    }
+    return;
+  }
+
+  // Fallback: load a few recently-updated JSONLs so "just finished" sessions still show up,
+  // but avoid loading every historical session in the directory.
+  const recent = FileMonitor.getRecentSessionFiles(projectDir, {
+    maxAgeMs: CLAUDE_RECENT_MTIME_GRACE_MS,
+    maxCount: CLAUDE_RECENT_MAX_FILES_PER_DIR
+  });
+  if (recent.length > 0) {
+    for (const filePath of recent) processFile(filePath, ClaudeCodeParser, 'claude-code');
+    return;
+  }
+
+  // Last resort: show the newest single JSONL.
+  const mostRecent = FileMonitor.getMostRecentSession(projectDir);
+  if (mostRecent) processFile(mostRecent, ClaudeCodeParser, 'claude-code');
 }
 
 function loadOpenClawLockedSessionsInDir(sessionsDir, lockedSessionFiles) {
@@ -149,6 +177,40 @@ async function checkProcesses() {
   const claudeActiveDirs = new Set(
     Array.from(claudeProcesses.values()).map(p => p.projectDir).filter(safeIsDir)
   );
+  const claudeActiveFilesFromLsof = new Set(
+    Array.from(claudeProcesses.values())
+      .flatMap(p => (p && Array.isArray(p.sessionFiles)) ? p.sessionFiles : [])
+      .map(p => path.resolve(p))
+  );
+  const claudeActiveFiles = new Set();
+  for (const dir of claudeActiveDirs) {
+    const dirAbs = path.resolve(dir);
+    const lsofInDir = Array.from(claudeActiveFilesFromLsof).filter(p => path.resolve(path.dirname(p)) === dirAbs);
+    const recentInDir = FileMonitor.getRecentSessionFiles(dirAbs, {
+      maxAgeMs: CLAUDE_RECENT_MTIME_GRACE_MS,
+      maxCount: CLAUDE_RECENT_MAX_FILES_PER_DIR
+    }).map(p => path.resolve(p));
+
+    const combined = new Set([...lsofInDir, ...recentInDir]);
+    if (combined.size === 0) {
+      // If we can't map to a file at all, still show something for the active dir.
+      const mostRecent = FileMonitor.getMostRecentSession(dirAbs);
+      if (mostRecent) claudeActiveFiles.add(path.resolve(mostRecent));
+      continue;
+    }
+
+    // Keep the set small and biased toward newest files.
+    const ranked = Array.from(combined).map(p => {
+      try {
+        const stat = fs.statSync(p);
+        return { p, mtimeMs: stat.mtimeMs };
+      } catch {
+        return { p, mtimeMs: 0 };
+      }
+    });
+    ranked.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    ranked.slice(0, CLAUDE_RECENT_MAX_FILES_PER_DIR).forEach(({ p }) => claudeActiveFiles.add(p));
+  }
 
   // Codex sessions dir isn't derived from CWD; keep legacy process scan for now, but ignore non-existent dirs.
   const codexProcesses = await ProcessMonitor.scanProcesses(
@@ -177,18 +239,22 @@ async function checkProcesses() {
 
   for (const dir of addedDirs) {
     if (isUnderDir(dir, ClaudeCodeParser.CLAUDE_PROJECTS_DIR)) {
+      fileLogger.fileWatch('watching', dir, 'claude-code');
       FileMonitor.watchProjectDir(dir, (filePath) => processFile(filePath, ClaudeCodeParser, 'claude-code'));
-      loadClaudeSessionsForProjectDir(dir);
+      loadClaudeSessionsForProjectDir(dir, claudeActiveFiles);
       continue;
     }
 
     if (isUnderDir(dir, OpenClawParser.OPENCLAW_AGENTS_DIR)) {
       // This should be `.../agents/<agent>/sessions`
+      fileLogger.fileWatch('watching', dir, 'openclaw');
       FileMonitor.watchProjectDir(dir, (filePath) => processFile(filePath, OpenClawParser, 'openclaw'));
       loadOpenClawLockedSessionsInDir(dir, openclawLocked.sessionFiles);
       continue;
     }
   }
+
+  processLogger.processCheck(claudeActiveDirs.size, codexActiveDirs.size, openclawActiveDirs.size);
 
   // Also ensure currently locked OpenClaw sessions are loaded at least once (covers the case where
   // a sessions dir was already known but locks appeared before we started watching it).
@@ -197,21 +263,24 @@ async function checkProcesses() {
   }
 
   // Check all sessions against the combined active directories
-  SessionManager.checkSessionProcesses(nextActive, handleStateChange, { activeOpenClawFiles: openclawActiveFiles });
+  SessionManager.checkSessionProcesses(nextActive, handleStateChange, {
+    activeOpenClawFiles: openclawActiveFiles,
+    activeClaudeFiles: claudeActiveFiles
+  });
 }
 
 // Start server
 server.listen(PORT, async () => {
-  console.log(`Nexus server running on http://localhost:${PORT}`);
-  console.log(`WebSocket server ready`);
-  console.log('');
+  logger.serverStarted(PORT, 0);
 
   // Initialize WebSocket
   initWebSocket(server, () => SessionManager.getAllSessions());
 
   // Step 1: Scan processes FIRST to get active project directories
   await checkProcesses();
-  console.log(`Loaded ${SessionManager.getAllSessions().length} active sessions\n`);
+
+  const sessionCount = SessionManager.getAllSessions().length;
+  logger.info('Initial session load completed', { sessions: sessionCount });
 
   // Step 2: Watch all project directories for new files
   // Scan all Claude Code projects

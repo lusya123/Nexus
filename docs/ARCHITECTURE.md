@@ -111,32 +111,74 @@ function getCooldownDuration(session) {
 └─────────────────┘
 ```
 
-## 核心组件
+## 后端架构（模块化设计）
 
-### 1. 文件监听系统
+**2026-02-15 重构**：后端已从单体 server.js (475行) 重构为模块化架构 (6个模块)。
 
-- **目录扫描**：启动时扫描所有工具的 session 目录
-- **fs.watch**：监听文件创建和修改事件
-- **增量读取**：使用 `fileOffsets` Map 记录每个文件的读取位置
+### 目录结构
 
-### 2. 进程扫描器
+```
+server/
+├── index.js                    # 主入口，协调各模块
+├── websocket.js                # WebSocket 通信层
+├── session-manager.js          # 会话生命周期管理
+├── parsers/
+│   └── claude-code.js         # Claude Code JSONL 解析
+└── monitors/
+    ├── file-monitor.js        # 文件监听 + 增量读取
+    └── process-monitor.js     # 进程扫描
+```
 
-- **定时扫描**：每 15 秒执行 `lsof` 命令
-- **PID 映射**：将进程 PID 映射到工作目录
-- **路径编码**：`/Users/xxx/project` → `-Users-xxx-project`
+### 核心模块
 
-### 3. 状态管理器
+#### 1. server/index.js - 主入口
+- 协调所有模块
+- 初始化 HTTP/WebSocket 服务器
+- 设置定时任务（进程扫描、空闲检测）
+- 处理文件变更事件
 
-- **sessions Map**：存储所有 session 的状态
-- **状态转换**：根据文件修改和进程状态更新 session 状态
-- **冷却定时器**：进程退出后启动倒计时
+#### 2. server/websocket.js - WebSocket 通信
+- 初始化 WebSocket 服务器
+- 管理客户端连接
+- 广播消息到所有连接的客户端
+- 新客户端连接时同步完整状态
 
-### 4. WebSocket 服务
+#### 3. server/session-manager.js - 会话管理
+- 维护 sessions Map
+- 管理会话生命周期状态机（ACTIVE → IDLE → COOLING → GONE）
+- 计算动态冷却时间
+- 检测空闲会话和进程退出
 
-- **实时推送**：文件修改、状态变化立即推送到浏览器
-- **完整状态同步**：新客户端连接时推送所有 session 状态
+#### 4. server/parsers/claude-code.js - Claude Code 解析器
+- 解析 Claude Code JSONL 格式
+- 提取用户和助手消息
+- 编码工作目录路径
+- 获取 session ID 和项目名称
 
-### 5. React 前端
+#### 5. server/monitors/file-monitor.js - 文件监听
+- 增量读取 JSONL 文件（记录字节偏移）
+- 使用 fs.watch 监听目录变化
+- 扫描项目目录发现新会话
+- 管理文件监听器生命周期
+
+#### 6. server/monitors/process-monitor.js - 进程监控
+- 扫描系统中的 Claude 进程
+- 使用 lsof 获取进程工作目录
+- 维护活跃进程列表
+- 检测进程退出事件
+
+### 模块间通信
+
+```
+index.js (主协调器)
+    ├─→ websocket.js (广播消息)
+    ├─→ session-manager.js (管理状态)
+    ├─→ file-monitor.js (监听文件)
+    ├─→ process-monitor.js (扫描进程)
+    └─→ parsers/claude-code.js (解析数据)
+```
+
+### React 前端
 
 - **卡片网格**：响应式布局，按最后活动时间排序
 - **动画系统**：错开入场、呼吸灯、淡出效果
@@ -146,14 +188,19 @@ function getCooldownDuration(session) {
 
 ### 添加新工具支持
 
-系统设计为易于扩展，添加新工具只需：
+模块化架构使得添加新工具支持变得简单：
 
-1. 在 `TOOL_CONFIGS` 中添加配置
-2. 实现对应的 parser 函数
-3. 添加进程扫描规则
-4. 前端添加颜色主题
+1. **创建新的 parser**：在 `server/parsers/` 下创建新文件（如 `codex.js`）
+2. **实现解析函数**：
+   - `parseMessage(line)` - 解析消息格式
+   - `getSessionId(filePath)` - 提取 session ID
+   - `getProjectName(dirPath)` - 获取项目名称
+   - `encodeCwd(cwd)` - 编码工作目录路径
+3. **更新进程监控**：在 `process-monitor.js` 中添加新工具的进程扫描规则
+4. **更新主入口**：在 `server/index.js` 中导入并使用新 parser
+5. **前端适配**：添加工具特定的颜色主题和图标
 
-详见 [CONTRIBUTING.md](./CONTRIBUTING.md)
+**示例**：添加 Codex 支持只需创建 `server/parsers/codex.js` 并实现上述接口。
 
 ## 性能考虑
 

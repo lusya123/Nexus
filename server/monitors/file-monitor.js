@@ -7,6 +7,15 @@ const fileOffsets = new Map();
 // Track watched directories
 const watchers = new Map();
 
+function isJsonlFile(name) {
+  return name.endsWith('.jsonl');
+}
+
+function isDeletedJsonl(name) {
+  // OpenClaw keeps tombstoned sessions as `*.jsonl.deleted.<timestamp>`
+  return name.includes('.jsonl.deleted.');
+}
+
 // Read incremental content from JSONL file
 export function readIncremental(filePath, parseMessageFn) {
   try {
@@ -42,7 +51,7 @@ export function watchProjectDir(projectDir, onFileChange) {
 
   try {
     const watcher = fs.watch(projectDir, (eventType, filename) => {
-      if (filename && filename.endsWith('.jsonl')) {
+      if (filename && isJsonlFile(filename) && !isDeletedJsonl(filename)) {
         const filePath = path.join(projectDir, filename);
 
         if (fs.existsSync(filePath)) {
@@ -64,7 +73,7 @@ export function scanProjectDir(projectDir, onFileFound) {
     const files = fs.readdirSync(projectDir);
 
     files.forEach(file => {
-      if (file.endsWith('.jsonl')) {
+      if (isJsonlFile(file) && !isDeletedJsonl(file)) {
         const filePath = path.join(projectDir, file);
         onFileFound(filePath);
       }
@@ -72,6 +81,140 @@ export function scanProjectDir(projectDir, onFileFound) {
   } catch (error) {
     console.error(`Error scanning ${projectDir}:`, error.message);
   }
+}
+
+// Get the most recently modified JSONL file in a directory
+export function getMostRecentSession(projectDir) {
+  try {
+    const files = fs.readdirSync(projectDir);
+    let mostRecentFile = null;
+    let mostRecentTime = 0;
+
+    files.forEach(file => {
+      if (isJsonlFile(file) && !isDeletedJsonl(file)) {
+        const filePath = path.join(projectDir, file);
+        try {
+          const stats = fs.statSync(filePath);
+          if (stats.mtimeMs > mostRecentTime) {
+            mostRecentTime = stats.mtimeMs;
+            mostRecentFile = filePath;
+          }
+        } catch (error) {
+          // Skip files that can't be accessed
+        }
+      }
+    });
+
+    return mostRecentFile;
+  } catch (error) {
+    return null;
+  }
+}
+
+// Get JSONL session files ordered by mtime (newest first)
+export function getSessionFilesByMtime(projectDir) {
+  try {
+    const files = fs.readdirSync(projectDir);
+    const items = [];
+
+    for (const file of files) {
+      if (!isJsonlFile(file) || isDeletedJsonl(file)) continue;
+      const filePath = path.join(projectDir, file);
+      try {
+        const stats = fs.statSync(filePath);
+        if (!stats.isFile()) continue;
+        items.push({ filePath, mtimeMs: stats.mtimeMs });
+      } catch {
+        // ignore
+      }
+    }
+
+    items.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return items.map(i => i.filePath);
+  } catch {
+    return [];
+  }
+}
+
+// Get recent JSONL session files under a directory.
+export function getRecentSessionFiles(projectDir, { maxAgeMs, maxCount }) {
+  const now = Date.now();
+  const files = getSessionFilesByMtime(projectDir);
+  const out = [];
+
+  for (const filePath of files) {
+    if (out.length >= maxCount) break;
+    try {
+      const stats = fs.statSync(filePath);
+      if (now - stats.mtimeMs <= maxAgeMs) {
+        out.push(filePath);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return out;
+}
+
+// OpenClaw: find active session JSONL files by `.jsonl.lock` markers.
+// Returns { sessionFiles: string[], activeDirs: Set<string> } where activeDirs are `.../sessions` directories.
+export function findOpenClawLockedSessions(agentsDir) {
+  const sessionFiles = [];
+  const activeDirs = new Set();
+
+  try {
+    if (!fs.existsSync(agentsDir)) {
+      return { sessionFiles, activeDirs };
+    }
+
+    const agents = fs.readdirSync(agentsDir);
+    for (const agent of agents) {
+      const agentPath = path.join(agentsDir, agent);
+      let agentStat;
+      try {
+        agentStat = fs.statSync(agentPath);
+      } catch {
+        continue;
+      }
+      if (!agentStat.isDirectory()) continue;
+
+      const sessionsDir = path.join(agentPath, 'sessions');
+      if (!fs.existsSync(sessionsDir)) continue;
+
+      let sessionsStat;
+      try {
+        sessionsStat = fs.statSync(sessionsDir);
+      } catch {
+        continue;
+      }
+      if (!sessionsStat.isDirectory()) continue;
+
+      let files;
+      try {
+        files = fs.readdirSync(sessionsDir);
+      } catch {
+        continue;
+      }
+
+      // A session is considered active if its `.jsonl.lock` exists.
+      for (const file of files) {
+        if (!file.endsWith('.jsonl.lock')) continue;
+        const jsonl = file.slice(0, -'.lock'.length);
+        if (!isJsonlFile(jsonl) || isDeletedJsonl(jsonl)) continue;
+
+        const jsonlPath = path.join(sessionsDir, jsonl);
+        if (fs.existsSync(jsonlPath)) {
+          sessionFiles.push(jsonlPath);
+          activeDirs.add(sessionsDir);
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return { sessionFiles, activeDirs };
 }
 
 // Scan all project directories
@@ -107,4 +250,118 @@ export function scanAllProjects(projectsDir, onFileFound, onDirFound) {
 // Clear file offset (for testing)
 export function clearOffset(filePath) {
   fileOffsets.delete(filePath);
+}
+
+// Scan Codex sessions (YYYY/MM/DD directory structure)
+export function scanCodexSessions(sessionsDir, onFileFound, onDirFound) {
+  try {
+    if (!fs.existsSync(sessionsDir)) {
+      console.log('Codex sessions directory not found');
+      return;
+    }
+
+    // Scan YYYY directories
+    const years = fs.readdirSync(sessionsDir);
+
+    for (const year of years) {
+      const yearPath = path.join(sessionsDir, year);
+
+      try {
+        const yearStat = fs.statSync(yearPath);
+        if (!yearStat.isDirectory()) continue;
+
+        // Scan MM directories
+        const months = fs.readdirSync(yearPath);
+
+        for (const month of months) {
+          const monthPath = path.join(yearPath, month);
+
+          try {
+            const monthStat = fs.statSync(monthPath);
+            if (!monthStat.isDirectory()) continue;
+
+            // Scan DD directories
+            const days = fs.readdirSync(monthPath);
+
+            for (const day of days) {
+              const dayPath = path.join(monthPath, day);
+
+              try {
+                const dayStat = fs.statSync(dayPath);
+                if (!dayStat.isDirectory()) continue;
+
+                // Scan JSONL files
+                const files = fs.readdirSync(dayPath);
+                files.forEach(file => {
+                  if (file.startsWith('rollout-') && file.endsWith('.jsonl')) {
+                    const filePath = path.join(dayPath, file);
+                    onFileFound(filePath);
+                  }
+                });
+
+                onDirFound(dayPath);
+              } catch (error) {
+                // Skip inaccessible day directories
+              }
+            }
+          } catch (error) {
+            // Skip inaccessible month directories
+          }
+        }
+      } catch (error) {
+        // Skip inaccessible year directories
+      }
+    }
+
+    console.log('Scanned Codex sessions');
+  } catch (error) {
+    console.error('Error scanning Codex sessions:', error.message);
+  }
+}
+
+// Scan OpenClaw agents (agents/*/sessions structure)
+export function scanOpenClawAgents(agentsDir, onFileFound, onDirFound) {
+  try {
+    if (!fs.existsSync(agentsDir)) {
+      console.log('OpenClaw agents directory not found');
+      return;
+    }
+
+    // Scan agents directory
+    const agents = fs.readdirSync(agentsDir);
+
+    for (const agent of agents) {
+      const agentPath = path.join(agentsDir, agent);
+
+      try {
+        const agentStat = fs.statSync(agentPath);
+        if (!agentStat.isDirectory()) continue;
+
+        // Scan sessions directory
+        const sessionsPath = path.join(agentPath, 'sessions');
+
+        if (fs.existsSync(sessionsPath)) {
+          const sessionsStat = fs.statSync(sessionsPath);
+
+          if (sessionsStat.isDirectory()) {
+            const files = fs.readdirSync(sessionsPath);
+            files.forEach(file => {
+              if (isJsonlFile(file) && !isDeletedJsonl(file)) {
+                const filePath = path.join(sessionsPath, file);
+                onFileFound(filePath);
+              }
+            });
+
+            onDirFound(sessionsPath);
+          }
+        }
+      } catch (error) {
+        // Skip inaccessible agent directories
+      }
+    }
+
+    console.log('Scanned OpenClaw agents');
+  } catch (error) {
+    console.error('Error scanning OpenClaw agents:', error.message);
+  }
 }

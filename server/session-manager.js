@@ -115,9 +115,13 @@ export function checkIdleSessions(onStateChange) {
 }
 
 // Check which sessions have their processes still running
-export function checkSessionProcesses(activeProjectDirs, onStateChange) {
+export function checkSessionProcesses(activeProjectDirs, onStateChange, options = {}) {
+  const activeOpenClawFiles = options.activeOpenClawFiles || null;
+
   for (const [sessionId, session] of sessions.entries()) {
-    const hasProcess = activeProjectDirs.has(session.projectDir);
+    const hasProcess = (session.tool === 'openclaw' && activeOpenClawFiles)
+      ? activeOpenClawFiles.has(session.filePath)
+      : activeProjectDirs.has(session.projectDir);
 
     if (!hasProcess && (session.state === 'active' || session.state === 'idle')) {
       // Process exited, move to COOLING

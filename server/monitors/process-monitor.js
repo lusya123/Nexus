@@ -8,10 +8,10 @@ const execAsync = promisify(exec);
 const activeProcesses = new Map();
 
 // Scan for active Claude Code processes
-export async function scanProcesses(projectsDir, encodeCwdFn) {
+export async function scanProcesses(toolName, projectsDir, encodeCwdFn) {
   try {
-    // Get all claude processes (excluding our own server)
-    const { stdout } = await execAsync('ps aux | grep " claude" | grep -v grep | grep -v "node server" | grep -v "node /Users"');
+    // Get all processes for the specified tool (excluding our own server)
+    const { stdout } = await execAsync(`ps aux | grep " ${toolName}" | grep -v grep | grep -v "node server" | grep -v "node /Users"`);
     const lines = stdout.trim().split('\n').filter(line => line.trim());
 
     const newProcesses = new Map();
@@ -30,13 +30,14 @@ export async function scanProcesses(projectsDir, encodeCwdFn) {
         if (cwdMatch) {
           const cwd = cwdMatch[1].trim();
           const encodedCwd = encodeCwdFn(cwd);
-          const projectDir = path.join(projectsDir, encodedCwd);
+          const projectDir = path.resolve(path.join(projectsDir, encodedCwd));
 
-          newProcesses.set(pid, { cwd, projectDir });
+          newProcesses.set(pid, { cwd, projectDir, toolName });
 
           // If this is a new process, log it
           if (!activeProcesses.has(pid)) {
             console.log(`Process detected: PID ${pid} → ${cwd}`);
+            console.log(`  Project dir: ${projectDir}`);
           }
         }
       } catch (error) {
@@ -44,20 +45,26 @@ export async function scanProcesses(projectsDir, encodeCwdFn) {
       }
     }
 
-    // Detect processes that have exited
+    // Detect processes that have exited (only for this tool's processes)
+    const toolProcessPids = new Set();
     for (const [pid, info] of activeProcesses.entries()) {
-      if (!newProcesses.has(pid)) {
-        console.log(`Process exited: PID ${pid} → ${info.cwd}`);
+      // Check if this PID belongs to the current tool by checking if it's in newProcesses
+      // or if it was previously tracked for this tool
+      if (info.toolName === toolName) {
+        toolProcessPids.add(pid);
+        if (!newProcesses.has(pid)) {
+          console.log(`Process exited: PID ${pid} → ${info.cwd}`);
+          activeProcesses.delete(pid);
+        }
       }
     }
 
-    // Update active processes
-    activeProcesses.clear();
+    // Add or update processes for this tool
     for (const [pid, info] of newProcesses.entries()) {
-      activeProcesses.set(pid, info);
+      activeProcesses.set(pid, { ...info, toolName });
     }
 
-    console.log(`Active processes: ${activeProcesses.size}`);
+    console.log(`Active ${toolName} processes: ${activeProcesses.size}`);
 
     return newProcesses;
   } catch (error) {
@@ -77,4 +84,23 @@ export function getActiveProjectDirs() {
     activeProjectDirs.add(info.projectDir);
   }
   return activeProjectDirs;
+}
+
+// Scan all tool processes
+export async function scanAllToolProcesses(tools) {
+  const allProcesses = new Map();
+
+  for (const tool of tools) {
+    const processes = await scanProcesses(
+      tool.processName,
+      tool.projectsDir,
+      tool.encodeCwdFn
+    );
+
+    if (processes.size > 0) {
+      allProcesses.set(tool.toolName, processes);
+    }
+  }
+
+  return allProcesses;
 }

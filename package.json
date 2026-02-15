@@ -8,13 +8,15 @@
     "start": "node server/index.js",
     "dev": "node server/index.js",
     "client": "cd client && npm run dev",
-    "test": "node verify-phase1.js"
+    "dev:all": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm run dev\" \"npm run client\"",
+    "test": "node tests/verify-phase1.js"
   },
   "dependencies": {
     "express": "^4.18.2",
     "ws": "^8.14.2"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "puppeteer": "^24.37.3"
   }
 }

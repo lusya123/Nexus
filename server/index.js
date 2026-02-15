@@ -1,11 +1,14 @@
 import express from 'express';
 import { createServer } from 'http';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 // Import modules
 import { initWebSocket, broadcast } from './websocket.js';
 import * as ClaudeCodeParser from './parsers/claude-code.js';
+import * as CodexParser from './parsers/codex.js';
+import * as OpenClawParser from './parsers/openclaw.js';
 import * as FileMonitor from './monitors/file-monitor.js';
 import * as ProcessMonitor from './monitors/process-monitor.js';
 import * as SessionManager from './session-manager.js';
@@ -22,40 +25,48 @@ app.use(express.static(path.join(__dirname, '..', 'dist')));
 // Create HTTP server
 const server = createServer(app);
 
+// Track active project directories
+let activeProjectDirs = new Set();
+
+// Heuristics for "currently running" sessions:
+// - Claude Code: if a process is running for a project dir, load the most recently modified N JSONL files.
+// - OpenClaw: treat `.jsonl.lock` files as authoritative "active session" markers.
+const RECENT_SESSION_MAX_FILES_PER_DIR = 25;
+
 // Process a JSONL file
-function processFile(filePath) {
-  const sessionId = ClaudeCodeParser.getSessionId(filePath);
-  const projectDir = path.dirname(filePath);
-  const projectName = ClaudeCodeParser.getProjectName(projectDir);
+function processFile(filePath, parser, toolName) {
+  const sessionId = parser.getSessionId(filePath);
+  const projectDir = path.resolve(path.dirname(filePath));
+  const projectName = parser.getProjectName(path.dirname(filePath));
 
   // Check if this is a new session
   if (!SessionManager.getSession(sessionId)) {
-    console.log(`New session discovered: ${sessionId} (${projectName})`);
+    console.log(`New session discovered: ${sessionId} (${projectName}) [${toolName}]`);
 
     const session = SessionManager.createSession(
       sessionId,
-      'claude-code',
+      toolName,
       projectName,
       filePath,
       projectDir
     );
 
     // Read all existing messages
-    const messages = FileMonitor.readIncremental(filePath, ClaudeCodeParser.parseMessage);
+    const messages = FileMonitor.readIncremental(filePath, parser.parseMessage);
     SessionManager.addMessages(sessionId, messages);
 
     // Broadcast new session
     broadcast({
       type: 'session_init',
       sessionId,
-      tool: 'claude-code',
+      tool: toolName,
       name: projectName,
       messages,
       state: 'active'
     });
   } else {
     // Read incremental messages
-    const messages = FileMonitor.readIncremental(filePath, ClaudeCodeParser.parseMessage);
+    const messages = FileMonitor.readIncremental(filePath, parser.parseMessage);
 
     if (messages.length > 0) {
       SessionManager.addMessages(sessionId, messages);
@@ -75,8 +86,37 @@ function processFile(filePath) {
         });
       });
 
-      console.log(`Session ${sessionId}: +${messages.length} messages`);
+      console.log(`Session ${sessionId} [${toolName}]: +${messages.length} messages`);
     }
+  }
+}
+
+function safeIsDir(p) {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isUnderDir(child, parent) {
+  const rel = path.relative(path.resolve(parent), path.resolve(child));
+  return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+function loadClaudeSessionsForProjectDir(projectDir) {
+  // We can't reliably map a running Claude process to a single session file, so when a project dir is active
+  // we load the newest N session files from that dir.
+  const files = FileMonitor.getSessionFilesByMtime(projectDir).slice(0, RECENT_SESSION_MAX_FILES_PER_DIR);
+  for (const filePath of files) {
+    processFile(filePath, ClaudeCodeParser, 'claude-code');
+  }
+}
+
+function loadOpenClawLockedSessionsInDir(sessionsDir, lockedSessionFiles) {
+  for (const filePath of lockedSessionFiles) {
+    if (path.resolve(path.dirname(filePath)) !== path.resolve(sessionsDir)) continue;
+    processFile(filePath, OpenClawParser, 'openclaw');
   }
 }
 
@@ -98,33 +138,108 @@ function handleStateChange(sessionId, newState, options) {
 
 // Check which sessions have their processes still running
 async function checkProcesses() {
-  const processes = await ProcessMonitor.scanProcesses(
+  const prevActive = activeProjectDirs;
+
+  // Claude Code: map PID -> project dir under `~/.claude/projects/<encoded-cwd>`.
+  const claudeProcesses = await ProcessMonitor.scanProcesses(
+    'claude',
     ClaudeCodeParser.CLAUDE_PROJECTS_DIR,
     ClaudeCodeParser.encodeCwd
   );
+  const claudeActiveDirs = new Set(
+    Array.from(claudeProcesses.values()).map(p => p.projectDir).filter(safeIsDir)
+  );
 
-  const activeProjectDirs = ProcessMonitor.getActiveProjectDirs();
-  SessionManager.checkSessionProcesses(activeProjectDirs, handleStateChange);
+  // Codex sessions dir isn't derived from CWD; keep legacy process scan for now, but ignore non-existent dirs.
+  const codexProcesses = await ProcessMonitor.scanProcesses(
+    'codex',
+    CodexParser.CODEX_SESSIONS_DIR,
+    CodexParser.encodeCwd
+  );
+  const codexActiveDirs = new Set(
+    Array.from(codexProcesses.values()).map(p => p.projectDir).filter(safeIsDir)
+  );
+
+  // OpenClaw: use `.jsonl.lock` markers to identify currently active sessions.
+  const openclawLocked = FileMonitor.findOpenClawLockedSessions(OpenClawParser.OPENCLAW_AGENTS_DIR);
+  const openclawActiveDirs = new Set(Array.from(openclawLocked.activeDirs).filter(safeIsDir));
+  const openclawActiveFiles = new Set(openclawLocked.sessionFiles.map(p => path.resolve(p)));
+
+  const nextActive = new Set([...claudeActiveDirs, ...codexActiveDirs, ...openclawActiveDirs]);
+  activeProjectDirs = nextActive;
+
+  // Load sessions for newly discovered active dirs (this is what makes "all running sessions" show up
+  // even if the directory didn't exist when the server started).
+  const addedDirs = new Set();
+  for (const dir of nextActive) {
+    if (!prevActive.has(dir)) addedDirs.add(dir);
+  }
+
+  for (const dir of addedDirs) {
+    if (isUnderDir(dir, ClaudeCodeParser.CLAUDE_PROJECTS_DIR)) {
+      FileMonitor.watchProjectDir(dir, (filePath) => processFile(filePath, ClaudeCodeParser, 'claude-code'));
+      loadClaudeSessionsForProjectDir(dir);
+      continue;
+    }
+
+    if (isUnderDir(dir, OpenClawParser.OPENCLAW_AGENTS_DIR)) {
+      // This should be `.../agents/<agent>/sessions`
+      FileMonitor.watchProjectDir(dir, (filePath) => processFile(filePath, OpenClawParser, 'openclaw'));
+      loadOpenClawLockedSessionsInDir(dir, openclawLocked.sessionFiles);
+      continue;
+    }
+  }
+
+  // Also ensure currently locked OpenClaw sessions are loaded at least once (covers the case where
+  // a sessions dir was already known but locks appeared before we started watching it).
+  for (const filePath of openclawLocked.sessionFiles) {
+    processFile(filePath, OpenClawParser, 'openclaw');
+  }
+
+  // Check all sessions against the combined active directories
+  SessionManager.checkSessionProcesses(nextActive, handleStateChange, { activeOpenClawFiles: openclawActiveFiles });
 }
 
 // Start server
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`Nexus server running on http://localhost:${PORT}`);
   console.log(`WebSocket server ready`);
   console.log('');
 
   // Initialize WebSocket
-  initWebSocket(server, SessionManager.getAllSessions());
+  initWebSocket(server, () => SessionManager.getAllSessions());
 
+  // Step 1: Scan processes FIRST to get active project directories
+  await checkProcesses();
+  console.log(`Loaded ${SessionManager.getAllSessions().length} active sessions\n`);
+
+  // Step 2: Watch all project directories for new files
   // Scan all Claude Code projects
   FileMonitor.scanAllProjects(
     ClaudeCodeParser.CLAUDE_PROJECTS_DIR,
-    processFile,
-    (projectDir) => FileMonitor.watchProjectDir(projectDir, processFile)
+    () => {}, // Don't process files during scan
+    (projectDir) => FileMonitor.watchProjectDir(projectDir, (filePath) =>
+      processFile(filePath, ClaudeCodeParser, 'claude-code')
+    )
   );
 
-  // Initial process scan
-  checkProcesses();
+  // Scan Codex sessions
+  FileMonitor.scanCodexSessions(
+    CodexParser.CODEX_SESSIONS_DIR,
+    () => {}, // Don't process files during scan
+    (projectDir) => FileMonitor.watchProjectDir(projectDir, (filePath) =>
+      processFile(filePath, CodexParser, 'codex')
+    )
+  );
+
+  // Scan OpenClaw agents
+  FileMonitor.scanOpenClawAgents(
+    OpenClawParser.OPENCLAW_AGENTS_DIR,
+    () => {}, // Don't process files during scan
+    (projectDir) => FileMonitor.watchProjectDir(projectDir, (filePath) =>
+      processFile(filePath, OpenClawParser, 'openclaw')
+    )
+  );
 
   // Scan processes every 15 seconds
   setInterval(checkProcesses, 15000);

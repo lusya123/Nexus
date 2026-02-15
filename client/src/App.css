@@ -57,6 +57,10 @@
   max-height: 600px;
 }
 
+.session-card.card-active {
+  border: 1px solid;
+}
+
 .session-header {
   display: flex;
   align-items: center;
@@ -69,7 +73,6 @@
 .session-tool {
   font-size: 12px;
   font-weight: 600;
-  color: #60a5fa;
   text-transform: uppercase;
 }
 

@@ -14,6 +14,24 @@ interface Session {
   state: 'active' | 'idle' | 'cooling' | 'gone';
 }
 
+const TOOL_CONFIG: Record<string, { label: string; color: string; borderColor: string }> = {
+  'claude-code': {
+    label: 'Claude Code',
+    color: '#60a5fa',      // 蓝色
+    borderColor: '#3b82f6'
+  },
+  'codex': {
+    label: 'Codex',
+    color: '#4ade80',      // 绿色
+    borderColor: '#22c55e'
+  },
+  'openclaw': {
+    label: 'OpenClaw',
+    color: '#c084fc',      // 紫色
+    borderColor: '#a855f7'
+  }
+};
+
 function App() {
   const [sessions, setSessions] = useState<Map<string, Session>>(new Map());
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
@@ -162,6 +180,7 @@ function App() {
 }
 
 function SessionCard({ session }: { session: Session }) {
+  const toolConfig = TOOL_CONFIG[session.tool] || TOOL_CONFIG['claude-code'];
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isEntering, setIsEntering] = useState(true);
 
@@ -177,9 +196,16 @@ function SessionCard({ session }: { session: Session }) {
   const cardClass = `session-card ${isEntering ? 'card-entering' : ''} ${session.state === 'active' ? 'card-active' : ''} ${session.state === 'cooling' ? 'card-exiting' : ''}`;
 
   return (
-    <div className={cardClass}>
+    <div
+      className={cardClass}
+      style={{
+        borderColor: session.state === 'active' ? toolConfig.borderColor : undefined
+      }}
+    >
       <div className="session-header">
-        <span className="session-tool">Claude Code</span>
+        <span className="session-tool" style={{ color: toolConfig.color }}>
+          {toolConfig.label}
+        </span>
         <span className="session-name">{session.name}</span>
         <span className={`session-state state-${session.state}`}>{session.state.toUpperCase()}</span>
       </div>

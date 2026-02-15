@@ -16,6 +16,19 @@
   z-index: 50;
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-logo {
+  width: auto;
+  height: 34px;
+  object-fit: contain;
+  display: block;
+}
+
 .header-controls {
   display: flex;
   align-items: center;

@@ -39,6 +39,8 @@ function App() {
   const [sessions, setSessions] = useState<Map<string, Session>>(new Map());
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const wsRef = useRef<WebSocket | null>(null);
+  const wsTokenRef = useRef(0); // Monotonic token to ignore events from stale sockets.
+  const reconnectTimerRef = useRef<number | null>(null);
   const entryQueueRef = useRef<Session[]>([]);
   const [displayedSessions, setDisplayedSessions] = useState<Set<string>>(new Set());
   const [showToolEvents, setShowToolEvents] = useState(false);
@@ -46,27 +48,38 @@ function App() {
   // WebSocket connection
   useEffect(() => {
     const connect = () => {
+      const token = ++wsTokenRef.current;
+
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+
       const ws = new WebSocket('ws://localhost:3000');
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (wsTokenRef.current !== token) return;
         wsLogger.wsConnected();
         setConnectionStatus('connected');
       };
 
       ws.onmessage = (event) => {
+        if (wsTokenRef.current !== token) return;
         const message = JSON.parse(event.data);
         wsLogger.wsMessage(message.type, { sessionId: message.sessionId?.substring(0, 12) });
         handleMessage(message);
       };
 
       ws.onclose = () => {
+        if (wsTokenRef.current !== token) return;
         wsLogger.wsDisconnected(true);
         setConnectionStatus('disconnected');
-        setTimeout(connect, 2000);
+        reconnectTimerRef.current = window.setTimeout(connect, 2000);
       };
 
       ws.onerror = (error) => {
+        if (wsTokenRef.current !== token) return;
         wsLogger.wsError(error);
       };
     };
@@ -74,8 +87,15 @@ function App() {
     connect();
 
     return () => {
+      // Prevent reconnect attempts and ignore any late events from this socket instance.
+      wsTokenRef.current++;
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
     };
   }, []);
@@ -118,15 +138,21 @@ function App() {
       entryQueueRef.current.push(session);
     } else if (message.type === 'message_add') {
       setSessions(prev => {
-        const newSessions = new Map(prev);
-        const session = newSessions.get(message.sessionId);
-        if (session) {
-          sessionLogger.messageAdded(message.sessionId, message.message.role, message.message.content.length);
-          newSessions.set(message.sessionId, {
-            ...session,
-            messages: [...session.messages, message.message]
-          });
+        const session = prev.get(message.sessionId);
+        if (!session) return prev;
+
+        const last = session.messages.length > 0 ? session.messages[session.messages.length - 1] : null;
+        // Guard against duplicated websocket deliveries (common in dev StrictMode / reconnect races).
+        if (last && last.role === message.message.role && last.content === message.message.content) {
+          return prev;
         }
+
+        const newSessions = new Map(prev);
+          sessionLogger.messageAdded(message.sessionId, message.message.role, message.message.content.length);
+        newSessions.set(message.sessionId, {
+          ...session,
+          messages: [...session.messages, message.message]
+        });
         return newSessions;
       });
     } else if (message.type === 'state_change') {
@@ -167,7 +193,10 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>Nexus - Agent Arena Monitor</h1>
+        <div className="header-left">
+          <img src="/logo-mark-white.png" alt="Nexus Logo" className="header-logo" />
+          <h1>Nexus - Agent Arena Monitor</h1>
+        </div>
         <div className="header-controls">
           <label className="toggle">
             <input

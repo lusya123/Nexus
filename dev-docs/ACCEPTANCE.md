@@ -186,6 +186,6 @@ tail -f /tmp/nexus-server.log | grep "messages"
 ## 联系方式
 
 如有问题，请查看：
-- 完整规格文档：`doc/agent-arena-monitor-spec.md`
+- 完整规格文档：`dev-docs/spec.md`
 - 测试报告：`TEST_REPORT.md`
 - README：`README.md`

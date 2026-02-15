@@ -295,7 +295,7 @@ tail -f /tmp/nexus-server.log | grep "messages"
 ## 十一、联系方式
 
 **文档**:
-- 完整规格: `doc/agent-arena-monitor-spec.md`
+- 完整规格: `dev-docs/spec.md`
 - 验收指南: `ACCEPTANCE.md`
 - 测试报告: `TEST_REPORT.md`
 - 项目说明: `README.md`

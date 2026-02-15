@@ -37,8 +37,8 @@ Nexus/
 ├── start.sh            # 一键启动脚本
 ├── client/             # React 前端
 ├── tests/              # 测试文件
-├── docs/               # 详细文档
-└── doc/                # 规格文档
+├── docs/               # 用户文档（架构、API、贡献指南）
+└── dev-docs/           # 开发文档（规格、交付报告）
 ```
 
 ## 核心功能
@@ -58,11 +58,20 @@ Nexus/
 
 ## 文档
 
-- `README.md` - 本文件（快速开始）
-- `docs/HANDOFF.md` - 完整交接文档
-- `docs/FINAL_REPORT.md` - 最终验收报告
-- `docs/ACCEPTANCE.md` - 手动验收清单
-- `doc/agent-arena-monitor-spec.md` - 完整规格文档
+**用户文档：**
+- [README.md](./README.md) - 快速开始（本文件）
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) - 架构设计与核心机制
+- [docs/API.md](./docs/API.md) - WebSocket API 文档
+- [docs/CONTRIBUTING.md](./docs/CONTRIBUTING.md) - 如何添加新工具支持
+- [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md) - 故障排查指南
+
+**开发文档：**
+- [dev-docs/spec.md](./dev-docs/spec.md) - 完整技术规格
+- [dev-docs/requirements.md](./dev-docs/requirements.md) - 需求文档
+- [dev-docs/vision.md](./dev-docs/vision.md) - 产品愿景
+- [dev-docs/HANDOFF.md](./dev-docs/HANDOFF.md) - 项目交接文档
+- [dev-docs/ACCEPTANCE.md](./dev-docs/ACCEPTANCE.md) - 验收清单
+- [dev-docs/FINAL_REPORT.md](./dev-docs/FINAL_REPORT.md) - 最终报告
 
 ## 测试
 
@@ -82,18 +91,17 @@ node tests/verify-phase1.js
 3. 进程扫描支持多工具
 4. 前端颜色区分（蓝色=Claude Code，绿色=Codex，紫色=OpenClaw）
 
-详见：`docs/HANDOFF.md`
+详见：[dev-docs/HANDOFF.md](./dev-docs/HANDOFF.md)
 
 ## 故障排查
 
-### WebSocket 显示 disconnected
-- 刷新浏览器页面
-- 检查后端是否运行：`curl http://localhost:3000`
-- 查看日志：`tail -f /tmp/nexus-server.log`
+常见问题快速解决：
 
-### 卡片不显示
-- 确认有活跃的 Claude Code sessions：`ps aux | grep claude`
-- 查看服务器日志：`tail -f /tmp/nexus-server.log | grep Session`
+- **WebSocket 显示 disconnected**：刷新浏览器，检查后端是否运行
+- **卡片不显示**：确认有活跃的 Claude Code sessions
+- **消息不更新**：重启服务清除缓存
+
+完整排查指南：[docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)
 
 ## 许可证
 

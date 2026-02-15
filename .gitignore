@@ -3,5 +3,5 @@ node_modules/
 *.log
 .env
 client/node_modules/
-client/dist/
+dist/
 /tmp/nexus-*.log

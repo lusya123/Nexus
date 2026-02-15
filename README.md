@@ -4,18 +4,34 @@
 
 实时监控本地 Claude Code sessions 的终端墙。
 
-## 快速开始
+## 一键安装（给用户）
 
 ```bash
-# 启动服务
-./start.sh
-
-# 或手动启动
-node server/index.js        # 后端 (终端 1)
-cd client && npm run dev    # 前端 (终端 2)
+curl -fsSL https://raw.githubusercontent.com/lusya123/Nexus/main/install.sh | bash
 ```
 
-访问：http://localhost:5173
+安装后可直接使用：
+
+```bash
+nexus start      # 生产模式（后台运行）
+nexus stop
+nexus restart
+nexus status
+nexus logs prod
+```
+
+## 本地开发（给你调试）
+
+```bash
+nexus dev-start
+nexus dev-stop
+nexus dev-restart
+nexus logs backend
+nexus logs frontend
+```
+
+开发模式访问：http://localhost:5173
+生产模式访问：http://localhost:3000
 
 ## 项目状态
 

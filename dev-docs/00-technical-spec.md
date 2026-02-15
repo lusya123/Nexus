@@ -1,5 +1,7 @@
 # Agent Arena Monitor — 正式开发规格文档
 
+> 历史说明（2026-02-15 之后）：本文档包含部分重构前术语（如 `server.js`）。当前实际入口为 `server/index.js`，以 `README.md` 与 `docs/` 下文档为准。
+
 ## 一、这是什么
 
 一个本地网页，自动发现并实时展示这台机器上 Claude Code、Codex、OpenClaw 的所有活跃 session 对话内容。
@@ -451,7 +453,7 @@ function readIncremental(filePath) {
 **测试目标**：验证服务端启动和 WebSocket 连接。
 
 **测试步骤**：
-1. 启动服务端：`node server.js`
+1. 启动服务端：`node server/index.js`
 2. 浏览器访问 `http://localhost:3000`（或配置的端口）
 3. 打开浏览器开发者工具，查看 WebSocket 连接状态
 4. 验证 WebSocket 连接成功建立
@@ -751,5 +753,4 @@ Phase 1 完成的标准：
 **重要**：E2E 测试是最终交付的必要条件。只有通过完整的 E2E 测试，才能确保产品质量，Phase 1 才算真正完成。
 
 达到以上标准后，Phase 1 才算真正完成，可以进入 Phase 2。
-
 

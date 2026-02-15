@@ -28,8 +28,7 @@ lsof -i :3000
 
 4. 重启服务：
 ```bash
-pkill -f "node server/index.js"
-./start.sh
+nexus restart
 ```
 
 5. 刷新浏览器页面
@@ -84,8 +83,7 @@ tail -f /tmp/nexus-server.log | grep -i watch
 
 2. 重启服务清除文件偏移缓存：
 ```bash
-pkill -f "node server/index.js"
-node server/index.js
+nexus restart
 ```
 
 3. 检查 WebSocket 消息（浏览器控制台）：
@@ -151,8 +149,7 @@ ps aux | grep "node server/index.js"
 
 4. 重启服务释放内存：
 ```bash
-pkill -f "node server/index.js"
-node server/index.js
+nexus restart
 ```
 
 ## 前端构建问题
@@ -192,36 +189,30 @@ npm run dev -- --port 5174
 
 ### 启用详细日志
 
-修改 `server/utils/logger.js` 中的日志输出配置：
+本项目通过环境变量控制日志级别（`server/utils/logger.js`）：
 
-```javascript
-const DEBUG = true;  // 启用调试日志
+```bash
+# 仅当前命令生效
+LOG_LEVEL=DEBUG node server/index.js
 
-function log(message, data = null) {
-  const timestamp = new Date().toISOString();
-  const logMessage = data
-    ? `[${timestamp}] ${message}: ${JSON.stringify(data)}`
-    : `[${timestamp}] ${message}`;
-
-  console.log(logMessage);
-  fs.appendFileSync('/tmp/nexus-server.log', logMessage + '\n');
-}
+# 或使用脚本
+LOG_LEVEL=DEBUG ./start.sh
 ```
 
 ### 查看实时日志
 
 ```bash
 # 所有日志
-tail -f /tmp/nexus-server.log
+nexus logs prod
 
 # 只看错误
-tail -f /tmp/nexus-server.log | grep -i error
+nexus logs prod | grep -i error
 
 # 只看 WebSocket
-tail -f /tmp/nexus-server.log | grep -i websocket
+nexus logs prod | grep -i websocket
 
 # 只看 session 变化
-tail -f /tmp/nexus-server.log | grep -i session
+nexus logs prod | grep -i session
 ```
 
 ## 常见错误信息

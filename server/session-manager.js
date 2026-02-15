@@ -58,11 +58,33 @@ export function createSession(sessionId, tool, name, filePath, projectDir) {
 // Add messages to session
 export function addMessages(sessionId, messages) {
   const session = sessions.get(sessionId);
-  if (!session) return false;
+  if (!session) return null;
 
-  session.messages.push(...messages);
+  // Some upstream agents can emit duplicate adjacent messages (e.g. retries/fallbacks)
+  // and our parsers intentionally skip many non-text entries, which can make those
+  // duplicates appear consecutive. Deduplicate strictly-adjacent identical items.
+  const incoming = Array.isArray(messages) ? messages : [];
+  const appended = [];
+  if (incoming.length > 0) {
+    let last = session.messages.length > 0 ? session.messages[session.messages.length - 1] : null;
+
+    for (const m of incoming) {
+      if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') {
+        continue;
+      }
+      if (last && last.role === m.role && last.content === m.content) {
+        continue;
+      }
+      appended.push(m);
+      last = m;
+    }
+
+    if (appended.length > 0) {
+      session.messages.push(...appended);
+    }
+  }
   session.lastModified = Date.now();
-  return true;
+  return appended;
 }
 
 // Calculate cooldown duration based on active time

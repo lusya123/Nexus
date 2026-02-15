@@ -86,10 +86,10 @@
 
 .sessions-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
-  gap: 32px;
-  padding: 40px;
-  max-width: 1800px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 24px;
+  padding: 32px;
+  max-width: 100%;
   margin: 0 auto;
 }
 

@@ -55,8 +55,8 @@ function processFile(filePath, parser, toolName) {
     );
 
     // Read all existing messages
-    const messages = FileMonitor.readIncremental(filePath, parser.parseMessage);
-    SessionManager.addMessages(sessionId, messages);
+    const parsed = FileMonitor.readIncremental(filePath, parser.parseMessage);
+    const appended = SessionManager.addMessages(sessionId, parsed) || [];
 
     sessionLogger.sessionDiscovered(sessionId, projectName, toolName, filePath);
 
@@ -66,32 +66,34 @@ function processFile(filePath, parser, toolName) {
       sessionId,
       tool: toolName,
       name: projectName,
-      messages,
+      messages: appended,
       state: 'active'
     });
   } else {
     // Read incremental messages
-    const messages = FileMonitor.readIncremental(filePath, parser.parseMessage);
+    const parsed = FileMonitor.readIncremental(filePath, parser.parseMessage);
 
-    if (messages.length > 0) {
-      SessionManager.addMessages(sessionId, messages);
+    if (parsed.length > 0) {
+      const appended = SessionManager.addMessages(sessionId, parsed) || [];
 
-      // Set to ACTIVE if it was IDLE
+      // Set to ACTIVE if it was IDLE (even if the new content was a deduped retry).
       const session = SessionManager.getSession(sessionId);
       if (session.state === 'idle') {
         SessionManager.setSessionState(sessionId, 'active', handleStateChange);
       }
 
-      // Broadcast each new message
-      messages.forEach(message => {
-        broadcast({
-          type: 'message_add',
-          sessionId,
-          message
+      if (appended.length > 0) {
+        // Broadcast each new message
+        appended.forEach(message => {
+          broadcast({
+            type: 'message_add',
+            sessionId,
+            message
+          });
         });
-      });
+      }
 
-      sessionLogger.sessionMessages(sessionId, toolName, messages.length);
+      sessionLogger.sessionMessages(sessionId, toolName, appended.length);
     }
   }
 }

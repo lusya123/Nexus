@@ -2,11 +2,11 @@
   "name": "nexus",
   "version": "1.0.0",
   "description": "AI Agent Arena Monitor - Phase 1",
-  "main": "server.js",
+  "main": "server/index.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
     "client": "cd client && npm run dev",
     "test": "node verify-phase1.js"
   },

@@ -23,7 +23,7 @@ echo ""
 
 # 启动后端
 echo "启动后端服务器 (http://localhost:3000)..."
-node server.js > /tmp/nexus-server.log 2>&1 &
+node server/index.js > /tmp/nexus-server.log 2>&1 &
 SERVER_PID=$!
 
 # 等待后端启动

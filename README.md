@@ -33,12 +33,19 @@ cd client && npm run dev    # 前端 (终端 2)
 
 ```
 Nexus/
-├── server.js           # 后端服务器
-├── start.sh            # 一键启动脚本
+├── server/             # 后端服务器
+│   ├── index.js        # 主入口
+│   ├── websocket.js    # WebSocket 服务
+│   ├── session-manager.js  # 会话状态管理
+│   ├── parsers/        # 解析器（支持多工具）
+│   │   └── claude-code.js
+│   └── monitors/       # 监控模块
+│       ├── file-monitor.js
+│       └── process-monitor.js
 ├── client/             # React 前端
 ├── tests/              # 测试文件
-├── docs/               # 用户文档（架构、API、贡献指南）
-└── dev-docs/           # 开发文档（规格、交付报告）
+├── docs/               # 用户文档
+└── dev-docs/           # 开发文档
 ```
 
 ## 核心功能

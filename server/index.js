@@ -34,6 +34,8 @@ let activeProjectDirs = new Set();
 // - OpenClaw: treat `.jsonl.lock` files as authoritative "active session" markers.
 const CLAUDE_RECENT_MAX_FILES_PER_DIR = 5;
 const CLAUDE_RECENT_MTIME_GRACE_MS = 30 * 60 * 1000; // keep recently-updated sessions visible after exit
+const CODEX_DISCOVERY_MAX_FILES = 12;
+const CODEX_DISCOVERY_MTIME_GRACE_MS = 30 * 60 * 1000; // periodically discover recently-updated Codex sessions
 
 // Process a JSONL file
 function processFile(filePath, parser, toolName) {
@@ -150,6 +152,33 @@ function loadOpenClawLockedSessionsInDir(sessionsDir, lockedSessionFiles) {
   }
 }
 
+function discoverRecentCodexFiles() {
+  const now = Date.now();
+  const candidates = [];
+
+  FileMonitor.scanCodexSessions(
+    CodexParser.CODEX_SESSIONS_DIR,
+    (filePath) => {
+      const resolved = path.resolve(filePath);
+      try {
+        const stat = fs.statSync(resolved);
+        if (!stat.isFile()) return;
+        if ((now - stat.mtimeMs) > CODEX_DISCOVERY_MTIME_GRACE_MS) return;
+        candidates.push({ filePath: resolved, mtimeMs: stat.mtimeMs });
+      } catch {
+        // ignore
+      }
+    },
+    (projectDir) => FileMonitor.watchProjectDir(projectDir, (filePath) =>
+      processFile(filePath, CodexParser, 'codex')
+    ),
+    { silent: true }
+  );
+
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates.slice(0, CODEX_DISCOVERY_MAX_FILES).map(i => i.filePath);
+}
+
 // Handle state changes
 function handleStateChange(sessionId, newState, options) {
   if (options.removed) {
@@ -214,14 +243,22 @@ async function checkProcesses() {
     ranked.slice(0, CLAUDE_RECENT_MAX_FILES_PER_DIR).forEach(({ p }) => claudeActiveFiles.add(p));
   }
 
-  // Codex sessions dir isn't derived from CWD; keep legacy process scan for now, but ignore non-existent dirs.
+  // Codex stores sessions under ~/.codex/sessions/YYYY/MM/DD, not per-CWD folders.
+  // Use sessions root as the process-mapping base and rely on lsof-open JSONL files.
   const codexProcesses = await ProcessMonitor.scanProcesses(
     'codex',
     CodexParser.CODEX_SESSIONS_DIR,
-    CodexParser.encodeCwd
+    () => ''
   );
+  const codexActiveFiles = new Set(
+    Array.from(codexProcesses.values())
+      .flatMap(p => (p && Array.isArray(p.sessionFiles)) ? p.sessionFiles : [])
+      .map(p => path.resolve(p))
+  );
+  const recentCodexFiles = discoverRecentCodexFiles();
+  recentCodexFiles.forEach(p => codexActiveFiles.add(p));
   const codexActiveDirs = new Set(
-    Array.from(codexProcesses.values()).map(p => p.projectDir).filter(safeIsDir)
+    Array.from(codexActiveFiles).map(p => path.resolve(path.dirname(p))).filter(safeIsDir)
   );
 
   // OpenClaw: use `.jsonl.lock` markers to identify currently active sessions.
@@ -258,6 +295,12 @@ async function checkProcesses() {
 
   processLogger.processCheck(claudeActiveDirs.size, codexActiveDirs.size, openclawActiveDirs.size);
 
+  // Ensure active Codex sessions are loaded even when a new YYYY/MM/DD directory appears
+  // after startup (directory watchers are attached only to known day folders).
+  for (const filePath of codexActiveFiles) {
+    processFile(filePath, CodexParser, 'codex');
+  }
+
   // Also ensure currently locked OpenClaw sessions are loaded at least once (covers the case where
   // a sessions dir was already known but locks appeared before we started watching it).
   for (const filePath of openclawLocked.sessionFiles) {
@@ -267,7 +310,8 @@ async function checkProcesses() {
   // Check all sessions against the combined active directories
   SessionManager.checkSessionProcesses(nextActive, handleStateChange, {
     activeOpenClawFiles: openclawActiveFiles,
-    activeClaudeFiles: claudeActiveFiles
+    activeClaudeFiles: claudeActiveFiles,
+    activeCodexFiles: codexActiveFiles
   });
 }
 

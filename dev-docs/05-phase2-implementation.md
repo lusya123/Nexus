@@ -636,7 +636,7 @@ cd ..
 **启动服务器**:
 
 ```bash
-node server.js
+node server/index.js
 ```
 
 **检查日志**:

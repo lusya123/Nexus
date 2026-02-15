@@ -159,6 +159,7 @@ export function checkIdleSessions(onStateChange) {
 export function checkSessionProcesses(activeProjectDirs, onStateChange, options = {}) {
   const activeOpenClawFiles = options.activeOpenClawFiles || null;
   const activeClaudeFiles = options.activeClaudeFiles || null;
+  const activeCodexFiles = options.activeCodexFiles || null;
 
   for (const [sessionId, session] of sessions.entries()) {
     const hasProcess = (session.tool === 'openclaw' && activeOpenClawFiles)
@@ -166,7 +167,7 @@ export function checkSessionProcesses(activeProjectDirs, onStateChange, options 
       : (session.tool === 'claude-code' && activeClaudeFiles)
         ? (activeClaudeFiles.has(session.filePath) || isRecentlyModified(session.filePath, CLAUDE_RECENT_MTIME_GRACE_MS))
       : (session.tool === 'codex')
-        ? isRecentlyModified(session.filePath, CODEX_ACTIVE_MTIME_GRACE_MS)
+        ? ((activeCodexFiles ? activeCodexFiles.has(session.filePath) : false) || isRecentlyModified(session.filePath, CODEX_ACTIVE_MTIME_GRACE_MS))
         : activeProjectDirs.has(session.projectDir);
 
     if (!hasProcess && (session.state === 'active' || session.state === 'idle')) {

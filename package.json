@@ -7,8 +7,11 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node server/index.js",
+    "dev:backend": "node scripts/dev-backend.js",
     "client": "cd client && npm run dev",
-    "dev:all": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm run dev\" \"npm run client\"",
+    "predev:all": "node scripts/ensure-dev-ports.js",
+    "dev:all": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm run dev:backend\" \"npm run client\"",
+    "test:codex": "node tests/codex-regression.js",
     "test": "node tests/verify-phase1.js"
   },
   "dependencies": {

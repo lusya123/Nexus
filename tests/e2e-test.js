@@ -141,7 +141,7 @@ async function runTests() {
     console.log('✅ 前端功能正常');
     console.log('');
     console.log('下一步：');
-    console.log('1. 完成手动验收测试（ACCEPTANCE.md）');
+    console.log('1. 按 docs/TROUBLESHOOTING.md 做手动验收（连接、消息、状态流转）');
     console.log('2. 或进入 Phase 2（添加 Codex 和 OpenClaw 支持）');
   } else {
     console.log('⚠️  部分测试失败，需要修复：');

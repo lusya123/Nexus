@@ -11,7 +11,7 @@
 ./start.sh
 
 # 或手动启动
-node server.js              # 后端 (终端 1)
+node server/index.js        # 后端 (终端 1)
 cd client && npm run dev    # 前端 (终端 2)
 ```
 
@@ -73,12 +73,12 @@ Nexus/
 - [docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md) - 故障排查指南
 
 **开发文档：**
-- [dev-docs/spec.md](./dev-docs/spec.md) - 完整技术规格
-- [dev-docs/requirements.md](./dev-docs/requirements.md) - 需求文档
-- [dev-docs/vision.md](./dev-docs/vision.md) - 产品愿景
-- [dev-docs/HANDOFF.md](./dev-docs/HANDOFF.md) - 项目交接文档
-- [dev-docs/ACCEPTANCE.md](./dev-docs/ACCEPTANCE.md) - 验收清单
-- [dev-docs/FINAL_REPORT.md](./dev-docs/FINAL_REPORT.md) - 最终报告
+- [dev-docs/00-technical-spec.md](./dev-docs/00-technical-spec.md) - 完整技术规格
+- [dev-docs/00-requirements.md](./dev-docs/00-requirements.md) - 需求文档
+- [dev-docs/00-vision.md](./dev-docs/00-vision.md) - 产品愿景
+- [dev-docs/05-phase2-implementation.md](./dev-docs/05-phase2-implementation.md) - Phase 2 实施记录
+- [dev-docs/REFACTORING-2026-02-15.md](./dev-docs/REFACTORING-2026-02-15.md) - 重构记录
+- [dev-docs/CHANGELOG.md](./dev-docs/CHANGELOG.md) - 变更日志
 
 ## 测试
 
@@ -90,15 +90,13 @@ node tests/e2e-test.js
 node tests/verify-phase1.js
 ```
 
-## 下一步：Phase 2
+## 当前支持
 
-添加 Codex 和 OpenClaw 支持：
-1. 实现 Codex parser（`~/.codex/sessions/`）
-2. 实现 OpenClaw parser（`~/.openclaw/agents/`）
-3. 进程扫描支持多工具
-4. 前端颜色区分（蓝色=Claude Code，绿色=Codex，紫色=OpenClaw）
+- Claude Code（`~/.claude/projects/`）
+- Codex（`~/.codex/sessions/`）
+- OpenClaw（`~/.openclaw/agents/`）
 
-详见：[dev-docs/HANDOFF.md](./dev-docs/HANDOFF.md)
+实现细节见：[dev-docs/05-phase2-implementation.md](./dev-docs/05-phase2-implementation.md)
 
 ## 故障排查
 

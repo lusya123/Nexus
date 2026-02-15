@@ -253,10 +253,11 @@ export function clearOffset(filePath) {
 }
 
 // Scan Codex sessions (YYYY/MM/DD directory structure)
-export function scanCodexSessions(sessionsDir, onFileFound, onDirFound) {
+export function scanCodexSessions(sessionsDir, onFileFound, onDirFound, options = {}) {
+  const silent = Boolean(options.silent);
   try {
     if (!fs.existsSync(sessionsDir)) {
-      console.log('Codex sessions directory not found');
+      if (!silent) console.log('Codex sessions directory not found');
       return;
     }
 
@@ -293,7 +294,7 @@ export function scanCodexSessions(sessionsDir, onFileFound, onDirFound) {
                 // Scan JSONL files
                 const files = fs.readdirSync(dayPath);
                 files.forEach(file => {
-                  if (file.startsWith('rollout-') && file.endsWith('.jsonl')) {
+                  if (isJsonlFile(file) && !isDeletedJsonl(file)) {
                     const filePath = path.join(dayPath, file);
                     onFileFound(filePath);
                   }
@@ -313,9 +314,9 @@ export function scanCodexSessions(sessionsDir, onFileFound, onDirFound) {
       }
     }
 
-    console.log('Scanned Codex sessions');
+    if (!silent) console.log('Scanned Codex sessions');
   } catch (error) {
-    console.error('Error scanning Codex sessions:', error.message);
+    if (!silent) console.error('Error scanning Codex sessions:', error.message);
   }
 }
 

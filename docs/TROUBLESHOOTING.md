@@ -28,7 +28,7 @@ lsof -i :3000
 
 4. 重启服务：
 ```bash
-pkill -f "node server.js"
+pkill -f "node server/index.js"
 ./start.sh
 ```
 
@@ -84,8 +84,8 @@ tail -f /tmp/nexus-server.log | grep -i watch
 
 2. 重启服务清除文件偏移缓存：
 ```bash
-pkill -f "node server.js"
-node server.js
+pkill -f "node server/index.js"
+node server/index.js
 ```
 
 3. 检查 WebSocket 消息（浏览器控制台）：
@@ -146,13 +146,13 @@ find ~/.claude/projects -name "*.jsonl" -exec ls -lh {} \;
 
 3. 监控内存使用：
 ```bash
-ps aux | grep "node server.js"
+ps aux | grep "node server/index.js"
 ```
 
 4. 重启服务释放内存：
 ```bash
-pkill -f "node server.js"
-node server.js
+pkill -f "node server/index.js"
+node server/index.js
 ```
 
 ## 前端构建问题
@@ -192,7 +192,7 @@ npm run dev -- --port 5174
 
 ### 启用详细日志
 
-修改 `server.js` 中的日志级别：
+修改 `server/utils/logger.js` 中的日志输出配置：
 
 ```javascript
 const DEBUG = true;  // 启用调试日志

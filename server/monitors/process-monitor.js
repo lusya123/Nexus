@@ -31,22 +31,35 @@ function extractOpenJsonlFilesFromLsof(lsofOutput, { restrictUnderDir } = {}) {
   return Array.from(out);
 }
 
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Match either a bare command (`codex`) or a path component (`/opt/.../codex`).
+// Case-insensitive to cover app bundle binaries like `.../MacOS/Codex`.
+export function matchesToolProcessCommand(command, toolName) {
+  const escaped = escapeRegExp(toolName);
+  const re = new RegExp(`(^|[\\s/])${escaped}(?=\\s|$)`, 'i');
+  return re.test(String(command || ''));
+}
+
 // Scan for active Claude Code processes
 export async function scanProcesses(toolName, projectsDir, encodeCwdFn) {
   try {
-    // Get all processes for the specified tool (excluding our own server)
-    const { stdout } = await execAsync(
-      `ps aux | grep " ${toolName}" | grep -v grep | grep -v "node server" | grep -v "node /Users" || true`
-    );
-    const lines = (stdout || '').trim().split('\n').filter(line => line.trim());
+    // Use `ps` directly and filter in JS; grep-based matching misses path-style commands.
+    const { stdout } = await execAsync('ps -axo pid=,command=');
+    const lines = (stdout || '').split('\n').filter(line => line.trim());
 
     const newProcesses = new Map();
 
     for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
-      const pid = parts[1];
+      const match = line.match(/^\s*(\d+)\s+(.*)$/);
+      if (!match) continue;
+      const pid = match[1];
+      const command = match[2];
 
       if (!pid) continue;
+      if (!matchesToolProcessCommand(command, toolName)) continue;
 
       try {
         // Get working directory for this process

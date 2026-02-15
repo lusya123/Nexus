@@ -56,6 +56,20 @@ export function parseMessage(line) {
   try {
     const obj = JSON.parse(line);
 
+    // Newer Codex logs include event messages:
+    // { type:"event_msg", payload:{ type:"user_message"|"agent_message", message:"..." } }
+    if (obj.type === 'event_msg' && obj.payload) {
+      const payload = obj.payload;
+      if (payload.type === 'user_message' && typeof payload.message === 'string') {
+        const text = payload.message.trim();
+        return text ? { role: 'user', content: text } : null;
+      }
+      if (payload.type === 'agent_message' && typeof payload.message === 'string') {
+        const text = payload.message.trim();
+        return text ? { role: 'assistant', content: text } : null;
+      }
+    }
+
     // Codex 格式:
     // - message: { type:"response_item", payload:{ type:"message", role:"user|assistant", content:[{type:"input_text|output_text", text:"..."}] } }
     // - tool calls: { type:"response_item", payload:{ type:"function_call", name:"...", arguments:"...", call_id:"..." } }

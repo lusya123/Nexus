@@ -96,8 +96,10 @@ function App() {
         const newSessions = new Map(prev);
         const session = newSessions.get(message.sessionId);
         if (session) {
-          session.messages.push(message.message);
-          newSessions.set(message.sessionId, { ...session });
+          newSessions.set(message.sessionId, {
+            ...session,
+            messages: [...session.messages, message.message]
+          });
         }
         return newSessions;
       });

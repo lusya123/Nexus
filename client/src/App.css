@@ -12,6 +12,27 @@
   border-bottom: 1px solid #222;
 }
 
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #cfcfcf;
+  user-select: none;
+}
+
+.toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: #4ade80;
+}
+
 .header h1 {
   margin: 0;
   font-size: 24px;
@@ -143,6 +164,69 @@
 .message-content {
   line-height: 1.5;
   white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-tool {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #121212;
+  border: 1px solid #2a2a2a;
+}
+
+.message-toolcall {
+  border-left: 3px solid #6b7280;
+}
+
+.message-tooloutput {
+  border-left: 3px solid #374151;
+}
+
+.tool-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.tool-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid #2a2a2a;
+  color: #d4d4d4;
+  background: #0f0f0f;
+  flex: 0 0 auto;
+}
+
+.tool-badge-call {
+  border-color: #334155;
+  color: #cbd5e1;
+  background: #0b1220;
+}
+
+.tool-badge-ok {
+  border-color: #14532d;
+  color: #86efac;
+  background: #071a10;
+}
+
+.tool-badge-err {
+  border-color: #7f1d1d;
+  color: #fca5a5;
+  background: #1a0a0a;
+}
+
+.tool-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #bdbdbd;
   word-break: break-word;
 }
 

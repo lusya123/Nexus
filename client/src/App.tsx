@@ -6,6 +6,8 @@ interface Message {
   content: string;
 }
 
+type MessageKind = 'text' | 'tool_call' | 'tool_output';
+
 interface Session {
   sessionId: string;
   tool: string;
@@ -38,6 +40,7 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const entryQueueRef = useRef<Session[]>([]);
   const [displayedSessions, setDisplayedSessions] = useState<Set<string>>(new Set());
+  const [showToolEvents, setShowToolEvents] = useState(false);
 
   // WebSocket connection
   useEffect(() => {
@@ -158,14 +161,24 @@ function App() {
     <div className="app">
       <header className="header">
         <h1>Nexus - Agent Arena Monitor</h1>
-        <div className={`status status-${connectionStatus}`}>
-          {connectionStatus === 'connected' ? '● Connected' : connectionStatus === 'connecting' ? '○ Connecting...' : '○ Disconnected'}
+        <div className="header-controls">
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={showToolEvents}
+              onChange={(e) => setShowToolEvents(e.target.checked)}
+            />
+            <span>Tool events</span>
+          </label>
+          <div className={`status status-${connectionStatus}`}>
+            {connectionStatus === 'connected' ? '● Connected' : connectionStatus === 'connecting' ? '○ Connecting...' : '○ Disconnected'}
+          </div>
         </div>
       </header>
 
       <div className="sessions-grid">
         {visibleSessions.map(session => (
-          <SessionCard key={session.sessionId} session={session} />
+          <SessionCard key={session.sessionId} session={session} showToolEvents={showToolEvents} />
         ))}
       </div>
 
@@ -179,10 +192,61 @@ function App() {
   );
 }
 
-function SessionCard({ session }: { session: Session }) {
+function getMessageKind(content: string): MessageKind {
+  const t = (content || '').trim();
+  if (t.startsWith('[tool_call]')) return 'tool_call';
+  if (t.startsWith('[tool_output]')) return 'tool_output';
+  return 'text';
+}
+
+function parseToolLine(content: string): { kind: MessageKind; text: string; name?: string; callId?: string; exitCode?: number } {
+  const t = (content || '').trim();
+  const kind = getMessageKind(t);
+
+  if (kind === 'tool_call') {
+    const m = t.match(/^\[tool_call\]\s+([^\s(]+)\s*(.*)$/);
+    const name = m?.[1];
+    const rest = (m?.[2] || '').trim();
+    const callIdMatch = rest.match(/\(([^)]+)\)/);
+    const callId = callIdMatch ? callIdMatch[1] : undefined;
+    return { kind, text: t.replace(/^\[tool_call\]\s*/, '').trim(), name, callId };
+  }
+
+  if (kind === 'tool_output') {
+    const exitMatch = t.match(/\bexit=(\d+)\b/);
+    const exitCode = exitMatch ? Number(exitMatch[1]) : undefined;
+    const callIdMatch = t.match(/^\[tool_output\]\s+([^\s]+)\s+/);
+    const callId = callIdMatch ? callIdMatch[1] : undefined;
+    return { kind, text: t.replace(/^\[tool_output\]\s*/, '').trim(), callId, exitCode };
+  }
+
+  return { kind: 'text', text: t };
+}
+
+function ToolEvent({ content }: { content: string }) {
+  const info = parseToolLine(content);
+  const isError = typeof info.exitCode === 'number' ? info.exitCode !== 0 : false;
+  const badgeClass = `tool-badge ${info.kind === 'tool_call' ? 'tool-badge-call' : isError ? 'tool-badge-err' : 'tool-badge-ok'}`;
+  const badgeText = info.kind === 'tool_call' ? 'CALL' : typeof info.exitCode === 'number' ? `EXIT ${info.exitCode}` : 'OUT';
+
+  return (
+    <div className={`message message-tool ${info.kind === 'tool_call' ? 'message-toolcall' : 'message-tooloutput'}`}>
+      <div className="tool-row">
+        <span className={badgeClass}>{badgeText}</span>
+        <div className="tool-text">{info.text}</div>
+      </div>
+    </div>
+  );
+}
+
+function SessionCard({ session, showToolEvents }: { session: Session; showToolEvents: boolean }) {
   const toolConfig = TOOL_CONFIG[session.tool] || TOOL_CONFIG['claude-code'];
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isEntering, setIsEntering] = useState(true);
+
+  const visibleMessages = session.messages
+    .filter(m => (m.content || '').trim().length > 0)
+    .filter(m => showToolEvents || getMessageKind(m.content) === 'text');
 
   useEffect(() => {
     const timer = setTimeout(() => setIsEntering(false), 400);
@@ -191,7 +255,7 @@ function SessionCard({ session }: { session: Session }) {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [session.messages.length]);
+  }, [visibleMessages.length]);
 
   const cardClass = `session-card ${isEntering ? 'card-entering' : ''} ${session.state === 'active' ? 'card-active' : ''} ${session.state === 'cooling' ? 'card-exiting' : ''}`;
 
@@ -211,11 +275,15 @@ function SessionCard({ session }: { session: Session }) {
       </div>
 
       <div className="messages">
-        {session.messages.map((msg, idx) => (
-          <div key={idx} className={`message message-${msg.role}`}>
-            <div className="message-role">{msg.role === 'user' ? 'User' : 'Assistant'}</div>
-            <div className="message-content">{msg.content || '...'}</div>
-          </div>
+        {visibleMessages.map((msg, idx) => (
+          getMessageKind(msg.content) === 'text' ? (
+            <div key={idx} className={`message message-${msg.role}`}>
+              <div className="message-role">{msg.role === 'user' ? 'User' : 'Assistant'}</div>
+              <div className="message-content">{msg.content}</div>
+            </div>
+          ) : (
+            <ToolEvent key={idx} content={msg.content} />
+          )
         ))}
         <div ref={messagesEndRef} />
       </div>

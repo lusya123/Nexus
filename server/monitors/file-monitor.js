@@ -217,6 +217,71 @@ export function findOpenClawLockedSessions(agentsDir) {
   return { sessionFiles, activeDirs };
 }
 
+// OpenClaw: find recently-updated session JSONL files under `agents/*/sessions`.
+// This is a fallback activity signal because `.jsonl.lock` can be very short-lived.
+export function getRecentOpenClawSessionFiles(agentsDir, { maxAgeMs, maxCountPerAgent = 3, maxTotal = 12 }) {
+  const now = Date.now();
+  const all = [];
+
+  try {
+    if (!fs.existsSync(agentsDir)) {
+      return [];
+    }
+
+    const agents = fs.readdirSync(agentsDir);
+    for (const agent of agents) {
+      const agentPath = path.join(agentsDir, agent);
+      let agentStat;
+      try {
+        agentStat = fs.statSync(agentPath);
+      } catch {
+        continue;
+      }
+      if (!agentStat.isDirectory()) continue;
+
+      const sessionsDir = path.join(agentPath, 'sessions');
+      if (!fs.existsSync(sessionsDir)) continue;
+
+      let sessionsStat;
+      try {
+        sessionsStat = fs.statSync(sessionsDir);
+      } catch {
+        continue;
+      }
+      if (!sessionsStat.isDirectory()) continue;
+
+      const perAgent = [];
+      let files;
+      try {
+        files = fs.readdirSync(sessionsDir);
+      } catch {
+        continue;
+      }
+
+      for (const file of files) {
+        if (!isJsonlFile(file) || isDeletedJsonl(file)) continue;
+        const filePath = path.join(sessionsDir, file);
+        try {
+          const stat = fs.statSync(filePath);
+          if (!stat.isFile()) continue;
+          if ((now - stat.mtimeMs) > maxAgeMs) continue;
+          perAgent.push({ filePath, mtimeMs: stat.mtimeMs });
+        } catch {
+          // ignore
+        }
+      }
+
+      perAgent.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      all.push(...perAgent.slice(0, maxCountPerAgent));
+    }
+  } catch {
+    // ignore
+  }
+
+  all.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return all.slice(0, maxTotal).map(i => i.filePath);
+}
+
 // Scan all project directories
 export function scanAllProjects(projectsDir, onFileFound, onDirFound) {
   try {

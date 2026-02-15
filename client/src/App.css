@@ -99,11 +99,18 @@
 
 .sessions-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 24px;
-  padding: 32px;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 20px;
+  padding: 24px;
   max-width: 100%;
   margin: 0 auto;
+  align-items: start;
+}
+
+@media (max-width: 1280px) {
+  .sessions-grid {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
 }
 
 @media (max-width: 768px) {
@@ -118,10 +125,12 @@
   background: var(--color-bg-secondary);
   border: 3px solid var(--color-border);
   border-radius: 0;
-  padding: 24px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  max-height: 700px;
+  height: clamp(320px, 42vh, 460px);
+  min-height: 320px;
+  max-height: 460px;
   position: relative;
   overflow: hidden;
 }

@@ -8,6 +8,8 @@ import { sessionLogger } from './utils/logger.js';
 const CODEX_ACTIVE_MTIME_GRACE_MS = 5 * 60 * 1000; // 5 minutes
 // Claude: prefer lsof-mapped active files, but keep recently-updated sessions visible after the process exits.
 const CLAUDE_RECENT_MTIME_GRACE_MS = 30 * 60 * 1000; // 30 minutes
+// OpenClaw lock files can be ephemeral; keep recently-updated sessions active longer.
+const OPENCLAW_RECENT_MTIME_GRACE_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 function isRecentlyModified(filePath, graceMs) {
   try {
@@ -162,13 +164,19 @@ export function checkSessionProcesses(activeProjectDirs, onStateChange, options 
   const activeCodexFiles = options.activeCodexFiles || null;
 
   for (const [sessionId, session] of sessions.entries()) {
-    const hasProcess = (session.tool === 'openclaw' && activeOpenClawFiles)
-      ? activeOpenClawFiles.has(session.filePath)
-      : (session.tool === 'claude-code' && activeClaudeFiles)
-        ? (activeClaudeFiles.has(session.filePath) || isRecentlyModified(session.filePath, CLAUDE_RECENT_MTIME_GRACE_MS))
-      : (session.tool === 'codex')
-        ? ((activeCodexFiles ? activeCodexFiles.has(session.filePath) : false) || isRecentlyModified(session.filePath, CODEX_ACTIVE_MTIME_GRACE_MS))
-        : activeProjectDirs.has(session.projectDir);
+    let hasProcess = false;
+    if (session.tool === 'openclaw') {
+      hasProcess = (activeOpenClawFiles ? activeOpenClawFiles.has(session.filePath) : false)
+        || isRecentlyModified(session.filePath, OPENCLAW_RECENT_MTIME_GRACE_MS);
+    } else if (session.tool === 'claude-code') {
+      hasProcess = (activeClaudeFiles ? activeClaudeFiles.has(session.filePath) : false)
+        || isRecentlyModified(session.filePath, CLAUDE_RECENT_MTIME_GRACE_MS);
+    } else if (session.tool === 'codex') {
+      hasProcess = (activeCodexFiles ? activeCodexFiles.has(session.filePath) : false)
+        || isRecentlyModified(session.filePath, CODEX_ACTIVE_MTIME_GRACE_MS);
+    } else {
+      hasProcess = activeProjectDirs.has(session.projectDir);
+    }
 
     if (!hasProcess && (session.state === 'active' || session.state === 'idle')) {
       // Process exited, move to COOLING

@@ -31,11 +31,14 @@ let activeProjectDirs = new Set();
 
 // Heuristics for "currently running" sessions:
 // - Claude Code: prefer `lsof`-discovered open `.jsonl` files per PID. If unavailable, fall back to "newest 1 JSONL per active dir".
-// - OpenClaw: treat `.jsonl.lock` files as authoritative "active session" markers.
+// - OpenClaw: lock files can be short-lived, so combine `.jsonl.lock` markers with recent file mtime.
 const CLAUDE_RECENT_MAX_FILES_PER_DIR = 5;
 const CLAUDE_RECENT_MTIME_GRACE_MS = 30 * 60 * 1000; // keep recently-updated sessions visible after exit
 const CODEX_DISCOVERY_MAX_FILES = 12;
 const CODEX_DISCOVERY_MTIME_GRACE_MS = 30 * 60 * 1000; // periodically discover recently-updated Codex sessions
+const OPENCLAW_DISCOVERY_MAX_FILES_PER_AGENT = 3;
+const OPENCLAW_DISCOVERY_MAX_FILES = 12;
+const OPENCLAW_DISCOVERY_MTIME_GRACE_MS = 6 * 60 * 60 * 1000; // keep long-running/silent OpenClaw sessions visible
 
 // Process a JSONL file
 function processFile(filePath, parser, toolName) {
@@ -145,8 +148,8 @@ function loadClaudeSessionsForProjectDir(projectDir, activeClaudeFiles) {
   if (mostRecent) processFile(mostRecent, ClaudeCodeParser, 'claude-code');
 }
 
-function loadOpenClawLockedSessionsInDir(sessionsDir, lockedSessionFiles) {
-  for (const filePath of lockedSessionFiles) {
+function loadOpenClawSessionsInDir(sessionsDir, activeSessionFiles) {
+  for (const filePath of activeSessionFiles) {
     if (path.resolve(path.dirname(filePath)) !== path.resolve(sessionsDir)) continue;
     processFile(filePath, OpenClawParser, 'openclaw');
   }
@@ -177,6 +180,14 @@ function discoverRecentCodexFiles() {
 
   candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return candidates.slice(0, CODEX_DISCOVERY_MAX_FILES).map(i => i.filePath);
+}
+
+function discoverRecentOpenClawFiles() {
+  return FileMonitor.getRecentOpenClawSessionFiles(OpenClawParser.OPENCLAW_AGENTS_DIR, {
+    maxAgeMs: OPENCLAW_DISCOVERY_MTIME_GRACE_MS,
+    maxCountPerAgent: OPENCLAW_DISCOVERY_MAX_FILES_PER_AGENT,
+    maxTotal: OPENCLAW_DISCOVERY_MAX_FILES
+  }).map(p => path.resolve(p));
 }
 
 // Handle state changes
@@ -263,8 +274,15 @@ async function checkProcesses() {
 
   // OpenClaw: use `.jsonl.lock` markers to identify currently active sessions.
   const openclawLocked = FileMonitor.findOpenClawLockedSessions(OpenClawParser.OPENCLAW_AGENTS_DIR);
-  const openclawActiveDirs = new Set(Array.from(openclawLocked.activeDirs).filter(safeIsDir));
-  const openclawActiveFiles = new Set(openclawLocked.sessionFiles.map(p => path.resolve(p)));
+  const recentOpenClawFiles = discoverRecentOpenClawFiles();
+  const openclawActiveFiles = new Set([
+    ...openclawLocked.sessionFiles.map(p => path.resolve(p)),
+    ...recentOpenClawFiles
+  ]);
+  const openclawActiveDirs = new Set([
+    ...Array.from(openclawLocked.activeDirs),
+    ...Array.from(openclawActiveFiles).map(filePath => path.resolve(path.dirname(filePath)))
+  ].filter(safeIsDir));
 
   const nextActive = new Set([...claudeActiveDirs, ...codexActiveDirs, ...openclawActiveDirs]);
   activeProjectDirs = nextActive;
@@ -288,7 +306,7 @@ async function checkProcesses() {
       // This should be `.../agents/<agent>/sessions`
       fileLogger.fileWatch('watching', dir, 'openclaw');
       FileMonitor.watchProjectDir(dir, (filePath) => processFile(filePath, OpenClawParser, 'openclaw'));
-      loadOpenClawLockedSessionsInDir(dir, openclawLocked.sessionFiles);
+      loadOpenClawSessionsInDir(dir, openclawActiveFiles);
       continue;
     }
   }
@@ -301,9 +319,9 @@ async function checkProcesses() {
     processFile(filePath, CodexParser, 'codex');
   }
 
-  // Also ensure currently locked OpenClaw sessions are loaded at least once (covers the case where
-  // a sessions dir was already known but locks appeared before we started watching it).
-  for (const filePath of openclawLocked.sessionFiles) {
+  // Also ensure currently active/recent OpenClaw sessions are loaded at least once (covers the case where
+  // a sessions dir was already known but no file-change event was observed by watchers).
+  for (const filePath of openclawActiveFiles) {
     processFile(filePath, OpenClawParser, 'openclaw');
   }
 

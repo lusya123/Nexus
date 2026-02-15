@@ -40,12 +40,18 @@ const activeProcesses = new Map();
 // Claude Code projects directory
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 
+// Clean session object for JSON serialization (remove non-serializable fields)
+function cleanSession(session) {
+  const { cooldownTimer, ...cleanedSession } = session;
+  return cleanedSession;
+}
+
 // WebSocket connection handler
 wss.on('connection', (ws) => {
   console.log('Client connected');
 
   // Send current state to newly connected client
-  const sessionList = Array.from(sessions.values());
+  const sessionList = Array.from(sessions.values()).map(cleanSession);
   ws.send(JSON.stringify({
     type: 'init',
     sessions: sessionList

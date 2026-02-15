@@ -1,115 +1,99 @@
 # Nexus - Agent Arena Monitor
 
-Phase 1: 终端墙 - 实时监控本地 Claude Code sessions
+**Phase 1 已完成** ✅
+
+实时监控本地 Claude Code sessions 的终端墙。
 
 ## 快速开始
 
-### 1. 安装依赖
-
 ```bash
-# 安装后端依赖
-npm install
+# 启动服务
+./start.sh
 
-# 安装前端依赖
-cd client
-npm install
-cd ..
+# 或手动启动
+node server.js              # 后端 (终端 1)
+cd client && npm run dev    # 前端 (终端 2)
 ```
 
-### 2. 启动服务
+访问：http://localhost:5173
 
-```bash
-# 启动后端服务器（终端 1）
-node server.js
+## 项目状态
 
-# 启动前端开发服务器（终端 2）
-cd client
-npm run dev
-```
+**Phase 1 完成** (2026-02-15)
+- ✅ 实时监控 Claude Code sessions
+- ✅ 文件监听 + 增量读取
+- ✅ 进程扫描 + 状态机
+- ✅ React 前端 + 动画效果
+- ✅ E2E 测试 13/13 通过
 
-### 3. 访问应用
-
-打开浏览器访问：http://localhost:5173
-
-## 功能特性
-
-- ✅ **自动发现**：自动扫描并监控所有本地 Claude Code sessions
-- ✅ **实时更新**：对话内容实时推送到浏览器
-- ✅ **状态管理**：ACTIVE / IDLE / COOLING / GONE 四种状态
-- ✅ **优雅动画**：错开入场、弹性动画、呼吸灯效果
-- ✅ **零配置**：启动后无需任何额外配置
-
-## 技术栈
-
-- **后端**：Node.js + Express + WebSocket
-- **前端**：React + TypeScript + Vite
-- **监控**：文件系统监听 + 进程扫描
+**已知问题**：
+- ⚠️ WebSocket 连接问题已修复（session 对象 JSON 序列化）
 
 ## 项目结构
 
 ```
 Nexus/
 ├── server.js           # 后端服务器
-├── package.json        # 后端依赖
-├── public/             # 静态文件
-│   └── index.html      # 备用 HTML 页面
+├── start.sh            # 一键启动脚本
 ├── client/             # React 前端
-│   ├── src/
-│   │   ├── App.tsx     # 主应用组件
-│   │   ├── App.css     # 样式和动画
-│   │   └── main.tsx    # 入口文件
-│   └── package.json    # 前端依赖
-└── doc/                # 文档
-    └── agent-arena-monitor-spec.md  # 完整规格文档
+├── tests/              # 测试文件
+├── docs/               # 详细文档
+└── doc/                # 规格文档
 ```
 
-## 工作原理
+## 核心功能
 
-1. **文件监听**：监控 `~/.claude/projects/` 下的所有 JSONL 文件
-2. **增量读取**：只读取文件的新增内容，不重新解析整个文件
-3. **进程扫描**：每 15 秒扫描 Claude Code 进程，判断 session 是否活跃
-4. **状态机**：根据文件活动和进程状态自动转换 session 状态
-5. **实时推送**：通过 WebSocket 将更新推送到浏览器
+- **自动发现**：扫描 `~/.claude/projects/` 下所有 JSONL 文件
+- **实时监听**：使用 `fs.watch` 监听文件修改
+- **增量读取**：只读取新增内容，不重新解析整个文件
+- **进程扫描**：每 15 秒扫描 Claude 进程，检测退出
+- **状态机**：ACTIVE / IDLE / COOLING / GONE 四种状态
+- **实时推送**：通过 WebSocket 推送到浏览器
 
-## Session 状态
+## 技术栈
 
-- **ACTIVE**：进程在运行 + 文件最近有修改（呼吸灯效果）
-- **IDLE**：进程在运行 + 文件一段时间没修改（静止状态）
-- **COOLING**：进程已退出，冷却倒计时中（淡出动画）
-- **GONE**：冷却期结束，从页面移除
+- 后端：Node.js + Express + WebSocket
+- 前端：React + TypeScript + Vite
+- 测试：Puppeteer
 
-## 开发
+## 文档
 
-### 运行测试
+- `README.md` - 本文件（快速开始）
+- `docs/HANDOFF.md` - 完整交接文档
+- `docs/FINAL_REPORT.md` - 最终验收报告
+- `docs/ACCEPTANCE.md` - 手动验收清单
+- `doc/agent-arena-monitor-spec.md` - 完整规格文档
+
+## 测试
 
 ```bash
-# 验证 Phase 1 功能
-node verify-phase1.js
+# 运行 E2E 测试
+node tests/e2e-test.js
+
+# 运行验证测试
+node tests/verify-phase1.js
 ```
 
-### 查看日志
+## 下一步：Phase 2
 
-```bash
-# 后端日志
-tail -f /tmp/nexus-server.log
+添加 Codex 和 OpenClaw 支持：
+1. 实现 Codex parser（`~/.codex/sessions/`）
+2. 实现 OpenClaw parser（`~/.openclaw/agents/`）
+3. 进程扫描支持多工具
+4. 前端颜色区分（蓝色=Claude Code，绿色=Codex，紫色=OpenClaw）
 
-# 前端日志
-tail -f /tmp/nexus-client.log
-```
+详见：`docs/HANDOFF.md`
 
-## Phase 1 完成标准
+## 故障排查
 
-- [x] 所有 5 个 Step 的单元测试通过
-- [x] 服务端和前端都能正常启动
-- [x] WebSocket 连接稳定
-- [x] 文件监听和增量读取正常
-- [x] 进程扫描和状态机正常
-- [x] 前端动画流畅
+### WebSocket 显示 disconnected
+- 刷新浏览器页面
+- 检查后端是否运行：`curl http://localhost:3000`
+- 查看日志：`tail -f /tmp/nexus-server.log`
 
-## 下一步计划
-
-- Phase 2：支持 Codex 和 OpenClaw
-- Phase 3：体验打磨（点击放大、布局切换、筛选等）
+### 卡片不显示
+- 确认有活跃的 Claude Code sessions：`ps aux | grep claude`
+- 查看服务器日志：`tail -f /tmp/nexus-server.log | grep Session`
 
 ## 许可证
 

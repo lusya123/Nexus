@@ -11,14 +11,17 @@
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: dark;
-  color: #ffffff;
-  background-color: #09090b;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  color: #ffffff;
+  background-color: #09090b;
 
   /* Brutalist Design System - Monochrome + Blue Accent */
   --color-primary: #2563EB;
@@ -49,10 +52,44 @@
   --shadow-glow: none;
 }
 
+:root[data-theme='light'] {
+  color-scheme: light;
+  color: #111827;
+  background-color: #f4f6f8;
+
+  --color-primary: #1d4ed8;
+  --color-secondary: #2563eb;
+  --color-accent: #3b82f6;
+
+  --color-success: #111827;
+  --color-warning: #111827;
+  --color-error: #111827;
+
+  --color-bg-primary: #f4f6f8;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #eef2f7;
+  --color-bg-elevated: #e5e7eb;
+
+  --color-border: #d1d5db;
+  --color-border-light: #9ca3af;
+  --color-border-focus: var(--color-primary);
+
+  --color-text-primary: #111827;
+  --color-text-secondary: #374151;
+  --color-text-tertiary: #6b7280;
+
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-glow: none;
+}
+
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
 }
 
 #root {

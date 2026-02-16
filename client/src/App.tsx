@@ -8,6 +8,7 @@ interface Message {
 }
 
 type MessageKind = 'text' | 'tool_call' | 'tool_output';
+type ThemeMode = 'light' | 'dark';
 
 interface Session {
   sessionId: string;
@@ -57,6 +58,23 @@ const TOOL_CONFIG: Record<string, { label: string; color: string; borderColor: s
   }
 };
 
+const THEME_STORAGE_KEY = 'nexus-theme-mode';
+
+function getInitialTheme(): ThemeMode {
+  if (typeof window === 'undefined') return 'dark';
+
+  try {
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === 'light' || saved === 'dark') {
+      return saved;
+    }
+  } catch {
+    // Ignore localStorage access failures and fallback to system preference.
+  }
+
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
 function createEmptyUsageTotals(): UsageTotalsPayload {
   return {
     scope: 'all_history',
@@ -88,12 +106,28 @@ function App() {
   const [sessions, setSessions] = useState<Map<string, Session>>(new Map());
   const [usageTotals, setUsageTotals] = useState<UsageTotalsPayload>(createEmptyUsageTotals);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    const initial = getInitialTheme();
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', initial);
+    }
+    return initial;
+  });
   const wsRef = useRef<WebSocket | null>(null);
   const wsTokenRef = useRef(0); // Monotonic token to ignore events from stale sockets.
   const reconnectTimerRef = useRef<number | null>(null);
   const entryQueueRef = useRef<Session[]>([]);
   const [displayedSessions, setDisplayedSessions] = useState<Set<string>>(new Set());
   const [showToolEvents, setShowToolEvents] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Ignore localStorage failures.
+    }
+  }, [theme]);
 
   // WebSocket connection
   useEffect(() => {
@@ -263,7 +297,11 @@ function App() {
     <div className="app">
       <header className="header">
         <div className="header-left">
-          <img src="/logo-mark-white.png" alt="Nexus Logo" className="header-logo" />
+          <img
+            src="/logo-mark-white.png"
+            alt="Nexus Logo"
+            className={`header-logo ${theme === 'light' ? 'header-logo-light' : ''}`}
+          />
           <h1>Nexus - Agent Arena Monitor</h1>
         </div>
         <div className="header-metrics">
@@ -287,6 +325,14 @@ function App() {
           )}
         </div>
         <div className="header-controls">
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={theme === 'dark'}
+              onChange={(e) => setTheme(e.target.checked ? 'dark' : 'light')}
+            />
+            <span>Night mode</span>
+          </label>
           <label className="toggle">
             <input
               type="checkbox"

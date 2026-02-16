@@ -414,15 +414,18 @@ async function checkProcesses() {
     CodexParser.CODEX_SESSIONS_DIR,
     () => ''
   );
-  const codexActiveFiles = new Set(
+  const codexOpenFiles = new Set(
     Array.from(codexProcesses.values())
       .flatMap(p => (p && Array.isArray(p.sessionFiles)) ? p.sessionFiles : [])
       .map(p => path.resolve(p))
   );
   const recentCodexFiles = discoverRecentCodexFiles();
-  recentCodexFiles.forEach(p => codexActiveFiles.add(p));
+  const codexDiscoveryFiles = new Set([
+    ...Array.from(codexOpenFiles),
+    ...recentCodexFiles
+  ]);
   const codexActiveDirs = new Set(
-    Array.from(codexActiveFiles).map(p => path.resolve(path.dirname(p))).filter(safeIsDir)
+    Array.from(codexDiscoveryFiles).map(p => path.resolve(path.dirname(p))).filter(safeIsDir)
   );
 
   // OpenClaw: use `.jsonl.lock` markers to identify currently active sessions.
@@ -473,7 +476,7 @@ async function checkProcesses() {
 
   // Ensure active Codex sessions are loaded even when a new YYYY/MM/DD directory appears
   // after startup (directory watchers are attached only to known day folders).
-  for (const filePath of codexActiveFiles) {
+  for (const filePath of codexDiscoveryFiles) {
     processFile(filePath, CodexParser, 'codex');
   }
 
@@ -487,7 +490,9 @@ async function checkProcesses() {
   SessionManager.checkSessionProcesses(nextActive, handleStateChange, {
     activeOpenClawFiles: openclawActiveFiles,
     activeClaudeFiles: claudeActiveFiles,
-    activeCodexFiles: codexActiveFiles
+    // Keep Codex liveness strict: only lsof-open files are treated as "has process".
+    // Recent-file discovery is for bootstrapping/updates, not for extending active lifetime.
+    activeCodexFiles: codexOpenFiles
   });
 }
 

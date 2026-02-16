@@ -15,6 +15,7 @@ export function useDisplayedSessions(sessions: Map<string, Session>) {
         sessionsToQueue.push(session);
       }
     });
+    sessionsToQueue.sort((a, b) => b.lastModified - a.lastModified);
 
     if (sessionsToQueue.length > 0) {
       queueRef.current.push(...sessionsToQueue);
@@ -42,6 +43,9 @@ export function useDisplayedSessions(sessions: Map<string, Session>) {
     return Array.from(sessions.values())
       .filter((session) => displayedSessionIds.has(session.sessionId))
       .sort((a, b) => {
+        const activityCompare = b.lastModified - a.lastModified;
+        if (activityCompare !== 0) return activityCompare;
+
         const stateOrder = { active: 0, idle: 1, cooling: 2, gone: 3 };
         const stateCompare = stateOrder[a.state] - stateOrder[b.state];
         if (stateCompare !== 0) return stateCompare;

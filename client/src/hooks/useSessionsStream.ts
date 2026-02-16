@@ -34,7 +34,10 @@ export function useSessionsStream() {
       const incomingSessions = Array.isArray(message.sessions) ? message.sessions : [];
       const newSessions = new Map<string, Session>();
       incomingSessions.forEach((session) => {
-        newSessions.set(session.sessionId, session);
+        newSessions.set(session.sessionId, {
+          ...session,
+          lastModified: Number(session.lastModified || Date.now())
+        });
       });
       setSessions(newSessions);
 
@@ -54,7 +57,8 @@ export function useSessionsStream() {
         tool: message.tool,
         name: message.name,
         messages: message.messages,
-        state: message.state || 'active'
+        state: message.state || 'active',
+        lastModified: Number(message.lastModified || Date.now())
       };
 
       sessionLogger.sessionInit(session.sessionId, session.tool, session.name, session.messages.length);
@@ -80,7 +84,8 @@ export function useSessionsStream() {
         sessionLogger.messageAdded(sessionId, incomingMessage.role, incomingMessage.content.length);
         newSessions.set(sessionId, {
           ...session,
-          messages: [...session.messages, incomingMessage]
+          messages: [...session.messages, incomingMessage],
+          lastModified: Date.now()
         });
         return newSessions;
       });

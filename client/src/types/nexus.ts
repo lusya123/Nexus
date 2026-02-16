@@ -23,6 +23,7 @@ export interface Session {
   name: string;
   messages: Message[];
   state: 'active' | 'idle' | 'cooling' | 'gone';
+  lastModified: number;
 }
 
 export interface UsageToolSummary {
@@ -53,6 +54,7 @@ export interface ServerMessage {
   tool?: string;
   name?: string;
   state?: Session['state'];
+  lastModified?: number;
   message?: Message;
   messages?: Message[];
   sessions?: Session[];

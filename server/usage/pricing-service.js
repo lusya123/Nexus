@@ -4,11 +4,9 @@ import path from 'path';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CACHE_PATH = path.join(process.cwd(), '.nexus-runtime', 'pricing-cache.json');
 
-const REMOTE_PRICING_URLS = [
-  'https://ccusage.com/api/model-prices.json',
-  'https://ccusage.com/api/pricing.json',
-  'https://raw.githubusercontent.com/ryoppippi/ccusage/main/packages/core/src/data/model-prices.json'
-];
+const LITELLM_PRICING_URL =
+  'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
+const PROVIDER_PREFIXES = ['openai/', 'azure/', 'anthropic/', 'openrouter/openai/'];
 
 const FALLBACK_PRICING = {
   // Derived from observed OpenClaw usage logs on this machine.
@@ -85,40 +83,51 @@ function toFiniteNumber(value) {
 function normalizeEntry(raw) {
   if (!raw || typeof raw !== 'object') return null;
 
-  const inputPerMillion = firstFinite(raw, [
+  const inputPerMillion = firstFiniteScaled(raw, [
     'inputPerMillion',
     'input_per_million',
     'input',
     'prompt',
-    'prompt_per_million'
+    'prompt_per_million',
+    ['input_cost_per_token', 1_000_000],
+    ['input_cost_per_token_above_200k_tokens', 1_000_000]
   ]);
-  const outputPerMillion = firstFinite(raw, [
+  const outputPerMillion = firstFiniteScaled(raw, [
     'outputPerMillion',
     'output_per_million',
     'output',
     'completion',
-    'completion_per_million'
+    'completion_per_million',
+    ['output_cost_per_token', 1_000_000],
+    ['output_cost_per_token_above_200k_tokens', 1_000_000]
   ]);
-  const cachedInputPerMillion = firstFinite(raw, [
+  const cachedInputPerMillion = firstFiniteScaled(raw, [
     'cachedInputPerMillion',
     'cached_input_per_million',
     'cached_input',
-    'cached'
+    'cached',
+    ['cache_read_input_token_cost', 1_000_000],
+    ['cache_read_input_token_cost_above_200k_tokens', 1_000_000]
   ]);
-  const cacheReadPerMillion = firstFinite(raw, [
+  const cacheReadPerMillion = firstFiniteScaled(raw, [
     'cacheReadPerMillion',
     'cache_read_per_million',
-    'cache_read'
+    'cache_read',
+    ['cache_read_input_token_cost', 1_000_000],
+    ['cache_read_input_token_cost_above_200k_tokens', 1_000_000]
   ]);
-  const cacheWritePerMillion = firstFinite(raw, [
+  const cacheWritePerMillion = firstFiniteScaled(raw, [
     'cacheWritePerMillion',
     'cache_write_per_million',
-    'cache_write'
+    'cache_write',
+    ['cache_creation_input_token_cost', 1_000_000],
+    ['cache_creation_input_token_cost_above_200k_tokens', 1_000_000]
   ]);
-  const reasoningOutputPerMillion = firstFinite(raw, [
+  const reasoningOutputPerMillion = firstFiniteScaled(raw, [
     'reasoningOutputPerMillion',
     'reasoning_output_per_million',
-    'reasoning_output'
+    'reasoning_output',
+    ['reasoning_output_cost_per_token', 1_000_000]
   ]);
 
   if (
@@ -142,11 +151,13 @@ function normalizeEntry(raw) {
   };
 }
 
-function firstFinite(raw, keys) {
-  for (const key of keys) {
+function firstFiniteScaled(raw, keys) {
+  for (const item of keys) {
+    const key = Array.isArray(item) ? item[0] : item;
+    const scale = Array.isArray(item) ? item[1] : 1;
     if (!(key in raw)) continue;
     const n = toFiniteNumber(raw[key]);
-    if (n !== null) return n;
+    if (n !== null) return n * scale;
   }
   return null;
 }
@@ -195,6 +206,9 @@ function getModelAliases(modelName) {
   };
 
   add(raw);
+  for (const prefix of PROVIDER_PREFIXES) {
+    add(`${prefix}${raw}`);
+  }
 
   // Provider-prefixed model names like "anthropic/claude-opus-4-6".
   const slashParts = raw.split('/').map(part => part.trim()).filter(Boolean);
@@ -269,16 +283,14 @@ async function fetchWithTimeout(url, timeoutMs = 10000) {
 }
 
 async function fetchRemotePricing() {
-  for (const url of REMOTE_PRICING_URLS) {
-    try {
-      const data = await fetchWithTimeout(url);
-      const table = normalizePricingTable(data);
-      if (table.size > 0) {
-        return { table, fetchedAt: Date.now() };
-      }
-    } catch {
-      // Try the next URL.
+  try {
+    const data = await fetchWithTimeout(LITELLM_PRICING_URL);
+    const table = normalizePricingTable(data);
+    if (table.size > 0) {
+      return { table, fetchedAt: Date.now() };
     }
+  } catch {
+    // Fallback to local cache.
   }
 
   return null;
@@ -341,7 +353,13 @@ export async function refreshPricingInBackground({ force = false } = {}) {
 
   refreshPromise = (async () => {
     const remote = await fetchRemotePricing();
-    if (!remote) return false;
+    if (!remote) {
+      const cached = readCache();
+      if (!cached || cached.table.size === 0) return false;
+      pricingTable = cached.table;
+      lastFetchedAt = cached.fetchedAt;
+      return true;
+    }
 
     pricingTable = remote.table;
     lastFetchedAt = remote.fetchedAt;

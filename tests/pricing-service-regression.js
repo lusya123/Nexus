@@ -1,4 +1,6 @@
 import assert from 'assert';
+import fs from 'fs';
+import path from 'path';
 
 import * as PricingService from '../server/usage/pricing-service.js';
 
@@ -20,6 +22,16 @@ function run(name, fn) {
   try {
     PricingService.__resetForTests();
     fn();
+    pass(name);
+  } catch (error) {
+    fail(name, error);
+  }
+}
+
+async function runAsync(name, fn) {
+  try {
+    PricingService.__resetForTests();
+    await fn();
     pass(name);
   } catch (error) {
     fail(name, error);
@@ -66,6 +78,76 @@ run('calculateCostUsd produces non-zero claude cost offline', () => {
 
   assert.equal(typeof cost, 'number');
   assert.equal(cost > 0, true);
+});
+
+await runAsync('refreshPricingInBackground accepts LiteLLM token-cost fields', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      'openai/gpt-5-codex': {
+        input_cost_per_token: 1.25e-6,
+        output_cost_per_token: 1e-5,
+        cache_read_input_token_cost: 1.25e-7,
+        cache_creation_input_token_cost: 1.25e-6
+      }
+    })
+  });
+
+  try {
+    const changed = await PricingService.refreshPricingInBackground({ force: true });
+    assert.equal(changed, true);
+
+    const pricing = PricingService.getModelPricing('gpt-5-codex');
+    assert.equal(Boolean(pricing), true);
+    assert.equal(pricing.inputPerMillion, 1.25);
+    assert.equal(pricing.outputPerMillion, 10);
+    assert.equal(pricing.cacheReadPerMillion, 0.125);
+    assert.equal(pricing.cacheWritePerMillion, 1.25);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+await runAsync('refreshPricingInBackground falls back to local cache when fetch fails', async () => {
+  const cachePath = path.join(process.cwd(), '.nexus-runtime', 'pricing-cache.json');
+  const cacheDir = path.dirname(cachePath);
+  const hadCache = fs.existsSync(cachePath);
+  const originalCache = hadCache ? fs.readFileSync(cachePath, 'utf-8') : null;
+  const originalFetch = global.fetch;
+
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(cachePath, JSON.stringify({
+    fetchedAt: Date.now(),
+    pricingTable: {
+      'gpt-5-codex': {
+        inputPerMillion: 9,
+        outputPerMillion: 90,
+        cacheReadPerMillion: 0.9,
+        cacheWritePerMillion: 9
+      }
+    }
+  }, null, 2));
+
+  global.fetch = async () => {
+    throw new Error('network_down');
+  };
+
+  try {
+    const changed = await PricingService.refreshPricingInBackground({ force: true });
+    assert.equal(changed, true);
+    const pricing = PricingService.getModelPricing('gpt-5-codex');
+    assert.equal(Boolean(pricing), true);
+    assert.equal(pricing.inputPerMillion, 9);
+    assert.equal(pricing.outputPerMillion, 90);
+  } finally {
+    global.fetch = originalFetch;
+    if (hadCache && originalCache !== null) {
+      fs.writeFileSync(cachePath, originalCache);
+    } else {
+      fs.rmSync(cachePath, { force: true });
+    }
+  }
 });
 
 console.log('---');

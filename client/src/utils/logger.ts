@@ -2,7 +2,7 @@
 // Provides consistent, detailed logs for AI debugging
 
 interface LogMeta {
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 // `erasableSyntaxOnly` forbids enums; keep levels as const data.
@@ -100,7 +100,7 @@ class Logger {
     this.error('WebSocket error', { error: error.type });
   }
 
-  wsMessage(type: string, data?: any): void {
+  wsMessage(type: string, data?: LogMeta): void {
     this.debug('WebSocket message received', { type, ...data });
   }
 

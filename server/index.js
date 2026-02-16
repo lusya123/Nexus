@@ -31,17 +31,22 @@ const server = createServer(app);
 
 // Track active project directories
 let activeProjectDirs = new Set();
+// Track the last time we observed incremental OpenClaw lines for each session file.
+const openclawLineActivityByFile = new Map();
 
 // Heuristics for "currently running" sessions:
 // - Claude Code: prefer `lsof`-discovered open `.jsonl` files per PID. If unavailable, fall back to "newest 1 JSONL per active dir".
-// - OpenClaw: lock files can be short-lived, so combine `.jsonl.lock` markers with recent file mtime.
+// - OpenClaw:
+//   - discovery is broad (recent file mtime) so candidates appear reliably;
+//   - liveness is strict (lock + recent incremental lines) so stale sessions exit promptly.
 const CLAUDE_RECENT_MAX_FILES_PER_DIR = 5;
 const CLAUDE_RECENT_MTIME_GRACE_MS = 30 * 60 * 1000; // keep recently-updated sessions visible after exit
 const CODEX_DISCOVERY_MAX_FILES = 12;
 const CODEX_DISCOVERY_MTIME_GRACE_MS = 30 * 60 * 1000; // periodically discover recently-updated Codex sessions
 const OPENCLAW_DISCOVERY_MAX_FILES_PER_AGENT = 3;
 const OPENCLAW_DISCOVERY_MAX_FILES = 12;
-const OPENCLAW_DISCOVERY_MTIME_GRACE_MS = 6 * 60 * 60 * 1000; // keep long-running/silent OpenClaw sessions visible
+const OPENCLAW_DISCOVERY_MTIME_GRACE_MS = 45 * 60 * 1000; // discovery-only window
+const OPENCLAW_LIVENESS_RECENT_ACTIVITY_MS = 15 * 60 * 1000; // keep visible after last observed new line
 const USAGE_BACKFILL_BROADCAST_EVERY = 40;
 const EXTERNAL_USAGE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -187,6 +192,9 @@ function processFile(filePath, parser, toolName) {
   const sessionId = parser.getSessionId(filePath);
   const projectDir = path.resolve(path.dirname(filePath));
   const lines = FileMonitor.readIncrementalLines(filePath, 'live-monitor');
+  if (toolName === 'openclaw' && lines.length > 0) {
+    openclawLineActivityByFile.set(filePath, Date.now());
+  }
   const parsedMessages = parseMessagesFromLines(lines, parser);
   const usageChanged = ingestUsageFromLines(lines, parser, toolName, sessionId);
   let runningChanged = false;
@@ -335,6 +343,31 @@ function discoverRecentOpenClawFiles() {
   }).map(p => path.resolve(p));
 }
 
+function getRecentOpenClawLineActivityFiles(maxAgeMs) {
+  const now = Date.now();
+  const recent = new Set();
+
+  for (const [filePath, ts] of openclawLineActivityByFile.entries()) {
+    if (!Number.isFinite(ts)) {
+      openclawLineActivityByFile.delete(filePath);
+      continue;
+    }
+
+    const age = now - ts;
+    if (age <= maxAgeMs) {
+      recent.add(path.resolve(filePath));
+      continue;
+    }
+
+    // Keep map bounded; entries far beyond liveness horizon are not useful.
+    if (age > (maxAgeMs * 2)) {
+      openclawLineActivityByFile.delete(filePath);
+    }
+  }
+
+  return recent;
+}
+
 // Handle state changes
 function handleStateChange(sessionId, newState, options) {
   if (options.removed) {
@@ -431,14 +464,14 @@ async function checkProcesses() {
 
   // OpenClaw: use `.jsonl.lock` markers to identify currently active sessions.
   const openclawLocked = FileMonitor.findOpenClawLockedSessions(OpenClawParser.OPENCLAW_AGENTS_DIR);
-  const recentOpenClawFiles = discoverRecentOpenClawFiles();
-  const openclawActiveFiles = new Set([
+  const recentOpenClawDiscoveryFiles = discoverRecentOpenClawFiles();
+  const openclawDiscoveryFiles = new Set([
     ...openclawLocked.sessionFiles.map(p => path.resolve(p)),
-    ...recentOpenClawFiles
+    ...recentOpenClawDiscoveryFiles
   ]);
   const openclawActiveDirs = new Set([
     ...Array.from(openclawLocked.activeDirs),
-    ...Array.from(openclawActiveFiles).map(filePath => path.resolve(path.dirname(filePath)))
+    ...Array.from(openclawDiscoveryFiles).map(filePath => path.resolve(path.dirname(filePath)))
   ].filter(safeIsDir));
 
   const nextActive = new Set([...claudeActiveDirs, ...codexActiveDirs, ...openclawActiveDirs]);
@@ -463,7 +496,7 @@ async function checkProcesses() {
       // This should be `.../agents/<agent>/sessions`
       fileLogger.fileWatch('watching', dir, 'openclaw');
       FileMonitor.watchProjectDir(dir, (filePath) => processFile(filePath, OpenClawParser, 'openclaw'));
-      loadOpenClawSessionsInDir(dir, openclawActiveFiles);
+      loadOpenClawSessionsInDir(dir, openclawDiscoveryFiles);
       continue;
     }
   }
@@ -483,13 +516,19 @@ async function checkProcesses() {
 
   // Also ensure currently active/recent OpenClaw sessions are loaded at least once (covers the case where
   // a sessions dir was already known but no file-change event was observed by watchers).
-  for (const filePath of openclawActiveFiles) {
+  for (const filePath of openclawDiscoveryFiles) {
     processFile(filePath, OpenClawParser, 'openclaw');
   }
 
+  const openclawLivenessFiles = new Set([
+    ...openclawLocked.sessionFiles.map(p => path.resolve(p)),
+    ...getRecentOpenClawLineActivityFiles(OPENCLAW_LIVENESS_RECENT_ACTIVITY_MS)
+  ]);
+
   // Check all sessions against the combined active directories
   SessionManager.checkSessionProcesses(nextActive, handleStateChange, {
-    activeOpenClawFiles: openclawActiveFiles,
+    // Strict OpenClaw liveness: lock or recently-observed incremental activity.
+    activeOpenClawFiles: openclawLivenessFiles,
     activeClaudeFiles: claudeActiveFiles,
     // Keep Codex liveness strict: only lsof-open files are treated as "has process".
     // Recent-file discovery is for bootstrapping/updates, not for extending active lifetime.

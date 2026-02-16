@@ -8,8 +8,6 @@ import { sessionLogger } from './utils/logger.js';
 const CODEX_ACTIVE_MTIME_GRACE_MS = 5 * 60 * 1000; // 5 minutes
 // Claude: prefer lsof-mapped active files, but keep recently-updated sessions visible after the process exits.
 const CLAUDE_RECENT_MTIME_GRACE_MS = 30 * 60 * 1000; // 30 minutes
-// OpenClaw lock files can be ephemeral; keep recently-updated sessions active longer.
-const OPENCLAW_RECENT_MTIME_GRACE_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 function isRecentlyModified(filePath, graceMs) {
   try {
@@ -166,8 +164,9 @@ export function checkSessionProcesses(activeProjectDirs, onStateChange, options 
   for (const [sessionId, session] of sessions.entries()) {
     let hasProcess = false;
     if (session.tool === 'openclaw') {
-      hasProcess = (activeOpenClawFiles ? activeOpenClawFiles.has(session.filePath) : false)
-        || isRecentlyModified(session.filePath, OPENCLAW_RECENT_MTIME_GRACE_MS);
+      // OpenClaw liveness is controlled by the caller with strict signals
+      // (lock files + recently-observed incremental activity).
+      hasProcess = activeOpenClawFiles ? activeOpenClawFiles.has(session.filePath) : false;
     } else if (session.tool === 'claude-code') {
       hasProcess = (activeClaudeFiles ? activeClaudeFiles.has(session.filePath) : false)
         || isRecentlyModified(session.filePath, CLAUDE_RECENT_MTIME_GRACE_MS);

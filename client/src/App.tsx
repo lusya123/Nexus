@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useState, useRef, type CSSProperties, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { flushSync } from 'react-dom'
 import './App.css'
 import { logger, wsLogger, sessionLogger } from './utils/logger'
 
@@ -10,6 +11,10 @@ interface Message {
 type MessageKind = 'text' | 'tool_call' | 'tool_output';
 type ThemeMode = 'light' | 'dark';
 type BreakdownMetric = 'tokens' | 'cost';
+type ThemeTransitionOrigin = { x: number; y: number };
+type ThemeViewTransitionApi = Document & {
+  startViewTransition?: (callback: () => void) => { finished: Promise<void> };
+};
 
 interface Session {
   sessionId: string;
@@ -262,6 +267,7 @@ function App() {
   const [showToolEvents, setShowToolEvents] = useState(false);
   const [hoveredBreakdownMetric, setHoveredBreakdownMetric] = useState<BreakdownMetric | null>(null);
   const [pinnedBreakdownMetric, setPinnedBreakdownMetric] = useState<BreakdownMetric | null>(null);
+  const themeToggleOriginRef = useRef<ThemeTransitionOrigin | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -494,6 +500,68 @@ function App() {
     }
   };
 
+  const getThemeToggleCenter = (target: HTMLElement): ThemeTransitionOrigin => {
+    const rect = target.getBoundingClientRect();
+    return {
+      x: rect.left + (rect.width / 2),
+      y: rect.top + (rect.height / 2)
+    };
+  };
+
+  const getThemeTransitionRadius = (origin: ThemeTransitionOrigin): number => {
+    const maxX = Math.max(origin.x, window.innerWidth - origin.x);
+    const maxY = Math.max(origin.y, window.innerHeight - origin.y);
+    return Math.hypot(maxX, maxY);
+  };
+
+  const applyThemeWithTransition = (nextTheme: ThemeMode, origin: ThemeTransitionOrigin) => {
+    if (nextTheme === theme) return;
+
+    const root = document.documentElement;
+    const startViewTransition = (document as ThemeViewTransitionApi).startViewTransition?.bind(document);
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (!startViewTransition || prefersReducedMotion) {
+      setTheme(nextTheme);
+      return;
+    }
+
+    const radius = getThemeTransitionRadius(origin);
+    root.style.setProperty('--theme-transition-x', `${origin.x}px`);
+    root.style.setProperty('--theme-transition-y', `${origin.y}px`);
+    root.style.setProperty('--theme-transition-radius', `${radius}px`);
+    root.classList.add('theme-transitioning');
+
+    try {
+      const transition = startViewTransition(() => {
+        flushSync(() => {
+          setTheme(nextTheme);
+        });
+      });
+
+      transition.finished.finally(() => {
+        root.classList.remove('theme-transitioning');
+      });
+    } catch {
+      root.classList.remove('theme-transitioning');
+      setTheme(nextTheme);
+    }
+  };
+
+  const handleThemeTogglePointerDown = (event: ReactPointerEvent<HTMLInputElement>) => {
+    themeToggleOriginRef.current = {
+      x: event.clientX,
+      y: event.clientY
+    };
+  };
+
+  const handleThemeToggleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextTheme: ThemeMode = event.target.checked ? 'dark' : 'light';
+    const origin = themeToggleOriginRef.current ?? getThemeToggleCenter(event.currentTarget);
+    themeToggleOriginRef.current = null;
+    applyThemeWithTransition(nextTheme, origin);
+  };
+
   return (
     <div className="app">
       <header className="header">
@@ -584,7 +652,8 @@ function App() {
             <input
               type="checkbox"
               checked={theme === 'dark'}
-              onChange={(e) => setTheme(e.target.checked ? 'dark' : 'light')}
+              onPointerDown={handleThemeTogglePointerDown}
+              onChange={handleThemeToggleChange}
             />
             <span>Night mode</span>
           </label>

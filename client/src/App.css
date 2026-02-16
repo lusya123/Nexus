@@ -4,6 +4,34 @@
   color: var(--color-text-primary);
 }
 
+:root.theme-transitioning::view-transition-group(root) {
+  animation: none;
+}
+
+:root.theme-transitioning::view-transition-old(root),
+:root.theme-transitioning::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+:root.theme-transitioning::view-transition-old(root) {
+  z-index: 1;
+}
+
+:root.theme-transitioning::view-transition-new(root) {
+  z-index: 2;
+  animation: theme-reveal-circle 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes theme-reveal-circle {
+  from {
+    clip-path: circle(0 at var(--theme-transition-x) var(--theme-transition-y));
+  }
+  to {
+    clip-path: circle(var(--theme-transition-radius) at var(--theme-transition-x) var(--theme-transition-y));
+  }
+}
+
 .header {
   display: flex;
   justify-content: space-between;

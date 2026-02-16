@@ -1,5 +1,18 @@
 # Nexus Phase 2 实现文档
 
+> 文档定位（更新于 2026-02-16）：本文档主要记录 Phase 2 实施过程，部分示例代码已与当前仓库实现存在差异。当前行为请以 `server/index.js`、`README.md`、`docs/ARCHITECTURE.md`、`docs/API.md` 为准。
+
+## 当前实现差异（2026-02-16）
+
+- 已新增 `server/usage/` 体系：`usage-manager.js`、`pricing-service.js`、`external-usage-service.js`。
+- WebSocket 除会话消息外，已增加 `usage_totals` 持续推送。
+- Claude/Codex/OpenClaw 的活跃发现策略已升级为“进程信号 + 最近修改文件兜底”混合模式。
+- OpenClaw 活跃识别已使用 `.jsonl.lock` + mtime 双信号。
+- 状态与调度周期以代码常量为准：
+  - 进程扫描：15 秒
+  - 空闲检测：30 秒
+  - 外部用量刷新：5 分钟
+
 ## 一、背景与目标
 
 ### 1.1 Phase 1 完成情况
@@ -642,11 +655,9 @@ node server/index.js
 **检查日志**:
 
 ```bash
-# 查看扫描到的 sessions
-tail -f /tmp/nexus-server.log | grep "session"
-
-# 查看进程扫描
-tail -f /tmp/nexus-server.log | grep "Process"
+# 推荐：通过控制脚本查看日志
+nexus logs backend | rg -i "session"
+nexus logs backend | rg -i "process"
 ```
 
 **预期输出**:

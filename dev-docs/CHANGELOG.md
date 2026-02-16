@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### 2026-02-16 - 文档全量同步（与当前实现对齐）
+
+#### 修改 (Changed)
+- 全面更新用户文档：
+  - `README.md`
+  - `docs/ARCHITECTURE.md`
+  - `docs/API.md`
+  - `docs/CONTRIBUTING.md`
+  - `docs/TROUBLESHOOTING.md`
+- 更新 `client/README.md`，替换 Vite 默认模板说明为项目实际前端说明。
+- 为 `dev-docs` 历史文档补充“当前实现对齐说明”，避免将历史阶段性内容误读为现状。
+
+#### 文档口径
+- 当前实现以 `server/index.js` 为主流程来源。
+- 当前支持工具：`claude-code` / `codex` / `openclaw`。
+- 当前 WebSocket 核心消息：`init` / `session_init` / `message_add` / `state_change` / `session_remove` / `usage_totals`。
+
 ### 2026-02-15 - 后端架构重构
 
 **提交**: 065f4c7

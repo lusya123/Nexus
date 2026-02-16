@@ -1,64 +1,104 @@
 # Nexus API 文档
 
-## WebSocket
+## 1. WebSocket
 
-服务地址：`ws://localhost:3000`
+- 地址：`ws://localhost:3000`
+- 连接建立后，服务端会先发送 `init` 全量快照。
 
 ```js
 const ws = new WebSocket('ws://localhost:3000');
 ```
 
-### 消息类型
+## 2. 消息类型
 
-#### 1. `init`
+### 2.1 `init`
 
-客户端连接后立即收到当前全量会话。
+客户端连接后立即收到一次全量数据。
 
 ```json
 {
   "type": "init",
+  "sessions": [],
   "usageTotals": {
     "scope": "all_history",
     "totals": {
-      "runningAgents": 3,
-      "totalTokens": 123456,
-      "totalCostUsd": 12.34
+      "runningAgents": 0,
+      "totalTokens": 0,
+      "totalCostUsd": 0
     },
     "byTool": {
-      "codex": { "totalTokens": 80000, "totalCostUsd": 9.2, "runningAgents": 1 },
-      "claude-code": { "totalTokens": 30000, "totalCostUsd": 2.1, "runningAgents": 1 },
-      "openclaw": { "totalTokens": 13456, "totalCostUsd": 1.04, "runningAgents": 1 }
+      "codex": { "totalTokens": 0, "totalCostUsd": 0, "runningAgents": 0 },
+      "claude-code": { "totalTokens": 0, "totalCostUsd": 0, "runningAgents": 0 },
+      "openclaw": { "totalTokens": 0, "totalCostUsd": 0, "runningAgents": 0 }
     },
     "backfill": {
       "status": "running",
-      "scannedFiles": 120,
-      "totalFiles": 800
+      "scannedFiles": 0,
+      "totalFiles": 100
     },
     "updatedAt": 1771184174000
-  },
-  "sessions": [
-    {
-      "sessionId": "abc123",
-      "tool": "claude-code",
-      "name": "my-project",
-      "messages": [
-        { "role": "user", "content": "hello" },
-        { "role": "assistant", "content": "hi" }
-      ],
-      "filePath": "/Users/xxx/.../session.jsonl",
-      "projectDir": "/Users/xxx/...",
-      "state": "active",
-      "startTime": 1700000000000,
-      "lastModified": 1700000005000,
-      "endTime": null
-    }
-  ]
+  }
 }
 ```
 
-#### 6. `usage_totals`
+### 2.2 `session_init`
 
-Token / 金额统计增量推送（全量历史累计 + 实时新增）。
+发现新会话时推送。
+
+```json
+{
+  "type": "session_init",
+  "sessionId": "abc123",
+  "tool": "codex",
+  "name": "2026-02-16",
+  "messages": [
+    { "role": "assistant", "content": "[tool_call] shell" }
+  ],
+  "state": "active"
+}
+```
+
+### 2.3 `message_add`
+
+会话新增消息时推送（按消息逐条推送）。
+
+```json
+{
+  "type": "message_add",
+  "sessionId": "abc123",
+  "message": {
+    "role": "assistant",
+    "content": "done"
+  }
+}
+```
+
+### 2.4 `state_change`
+
+会话状态变化时推送。
+
+```json
+{
+  "type": "state_change",
+  "sessionId": "abc123",
+  "state": "idle"
+}
+```
+
+### 2.5 `session_remove`
+
+会话进入 `gone` 并从内存移除后推送。
+
+```json
+{
+  "type": "session_remove",
+  "sessionId": "abc123"
+}
+```
+
+### 2.6 `usage_totals`
+
+用量聚合变化时推送（实时增量 + 历史回扫 + 外部覆盖）。
 
 ```json
 {
@@ -83,64 +123,9 @@ Token / 金额统计增量推送（全量历史累计 + 实时新增）。
 }
 ```
 
-#### 2. `session_init`
+## 3. 数据模型
 
-发现新会话时推送。
-
-```json
-{
-  "type": "session_init",
-  "sessionId": "abc123",
-  "tool": "codex",
-  "name": "2026-02-15",
-  "messages": [
-    { "role": "assistant", "content": "[tool_call] shell" }
-  ],
-  "state": "active"
-}
-```
-
-#### 3. `message_add`
-
-会话新增消息时推送。
-
-```json
-{
-  "type": "message_add",
-  "sessionId": "abc123",
-  "message": {
-    "role": "assistant",
-    "content": "done"
-  }
-}
-```
-
-#### 4. `state_change`
-
-会话状态变化时推送。
-
-```json
-{
-  "type": "state_change",
-  "sessionId": "abc123",
-  "state": "idle"
-}
-```
-
-#### 5. `session_remove`
-
-会话进入 `gone` 并被移除时推送。
-
-```json
-{
-  "type": "session_remove",
-  "sessionId": "abc123"
-}
-```
-
-## 数据模型
-
-### Session
+### 3.1 Session
 
 ```ts
 interface Session {
@@ -157,15 +142,26 @@ interface Session {
 }
 ```
 
-### UsageTotals
+说明：`gone` 通常通过 `session_remove` 体现，最终不会长期留在 `sessions` 列表。
+
+### 3.2 Message
+
+```ts
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+}
+```
+
+### 3.3 UsageTotals
 
 ```ts
 interface UsageTotals {
   scope: 'all_history';
   totals: {
-    runningAgents: number;   // state in {active, idle}
-    totalTokens: number;     // 全量历史累计 + 实时增量
-    totalCostUsd: number;    // USD
+    runningAgents: number; // state in {active, idle}
+    totalTokens: number;
+    totalCostUsd: number;
   };
   byTool: Record<string, {
     totalTokens: number;
@@ -181,15 +177,11 @@ interface UsageTotals {
 }
 ```
 
-### Message
+## 4. HTTP
 
-```ts
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-}
-```
+当前后端仅提供：
 
-## HTTP
+- 静态资源服务（`dist/`）
+- WebSocket 实时通道
 
-当前后端仅承载静态资源与 WebSocket，未提供稳定公开的 REST API。
+不提供稳定公开的 REST API。

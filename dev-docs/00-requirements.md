@@ -1,5 +1,7 @@
 # Agent Arena Monitor — 需求文档
 
+> 历史说明（更新于 2026-02-16）：本文档记录的是立项阶段需求与边界，不是当前实现真值。当前行为以 `README.md`、`docs/ARCHITECTURE.md`、`docs/API.md` 为准。
+
 ## 一、这是什么
 
 一个本地网页，自动发现并实时展示这台机器上 Claude Code、Codex、OpenClaw 的所有 session 对话内容。

@@ -1,218 +1,155 @@
 # Nexus 架构说明
 
-## 核心设计理念
+> 本文档描述当前实现（以 `server/index.js` 为主）。历史设计讨论见 `dev-docs/`。
 
-Nexus 是一个零配置的本地监控系统，自动发现并实时展示机器上所有 AI 编程工具的活跃 session。
+## 1. 总览
 
-**设计原则：**
-- **零人工干预**：Session 自动出现、自动消失
-- **进程驱动**：通过操作系统进程判断 session 存活状态
-- **增量读取**：只解析文件新增内容，不重复读取
-- **质量模型**：Session 停留时间与活跃时长成正比
+Nexus 是本地会话监控服务，自动发现并实时展示三类工具会话：
 
-## Session 生命周期
+- Claude Code（`~/.claude/projects/`）
+- Codex（`~/.codex/sessions/`）
+- OpenClaw（`~/.openclaw/agents/`）
 
-### 状态机
+核心目标：
 
-每个 session 有四种状态：
+- 自动发现和追踪活跃会话
+- 增量读取 JSONL，避免全量重解析
+- 通过 WebSocket 向前端推送会话与用量更新
+- 提供全历史口径 Token / USD 聚合
 
-```
-ACTIVE   → 进程在跑 + 文件最近有修改（正在工作）
-IDLE     → 进程在跑 + 文件一段时间没修改（用户在思考）
-COOLING  → 进程已退出，冷却倒计时中（逐渐淡出）
-GONE     → 冷却期结束（从页面移除）
-```
+## 2. 生命周期与状态机
 
-### 状态转换流程
+会话状态：
 
-```
-新文件出现 ──→ ACTIVE
-                 │
-          文件持续修改 ←──┐
-                 │        │
-          2分钟无修改     │
-                 ↓        │
-               IDLE ──────┘ (文件再次修改)
-                 │
-           进程退出
-                 ↓
-             COOLING ──→ 冷却期结束 ──→ GONE（移除）
-```
+- `active`：有新内容或最近活跃
+- `idle`：持续无新内容
+- `cooling`：活跃信号消失后进入冷却
+- `gone`：冷却结束并从内存移除
 
-### 活跃判定机制
+状态转换规则：
 
-**进程存活 = Session 存活**
+- `active -> idle`：2 分钟无新增消息
+- `active|idle -> cooling`：进程/文件活跃信号消失
+- `cooling -> gone`：冷却计时结束
 
-通过 `lsof` 命令扫描工具进程：
+冷却时长：
 
-```bash
-lsof -c claude -a -d cwd -F pcn 2>/dev/null
-```
+- 基于会话活跃时长的 10%
+- 最短 3 秒，最长 5 分钟
 
-- 进程在 → session 开着
-- 进程退出 → session 进入冷却期
+## 3. 活跃会话发现策略
 
-每 15 秒执行一次进程扫描，结合 `fs.watch` 实时检测文件修改。
+### 3.1 Claude Code
 
-### 质量模型：动态冷却时间
+- 进程扫描优先使用 `lsof` 提取该 PID 打开的 `.jsonl`。
+- 同时保留最近修改文件作为兜底，避免短时漏检。
+- 关键参数：
+  - 最近修改保活窗口：30 分钟
+  - 每目录最多纳入：5 个文件
 
-Session 的冷却时间根据活跃时长动态计算：
+### 3.2 Codex
 
-```javascript
-function getCooldownDuration(session) {
-  const activeSeconds = (session.endTime - session.startTime) / 1000;
-  // 活跃时间的 10%，限制在 3秒 ~ 5分钟
-  return clamp(activeSeconds * 0.1, 3, 300);
-}
-```
+- 因目录为 `YYYY/MM/DD` 结构，按“活跃文件集合”而不是固定项目目录追踪。
+- 活跃来源：`lsof` 打开文件 + 最近修改文件发现。
+- 关键参数：
+  - 最近修改窗口：30 分钟
+  - 全局最多发现：12 个最近文件
 
-**效果：**
-- 10 秒快速任务 → 停留 3 秒后淡出
-- 1 小时长对话 → 停留 6 分钟后淡出
-- 自然形成视觉层次：重要的 session 停留更久
+### 3.3 OpenClaw
 
-## 数据流
+- 使用 `.jsonl.lock` 作为活跃标记。
+- lock 可能短暂，叠加最近修改窗口做保活。
+- 关键参数：
+  - 最近修改窗口：6 小时
+  - 每 agent 最多：3 个文件
+  - 总上限：12 个文件
 
-```
-┌─────────────────┐
-│  文件系统监听    │  fs.watch 监听 JSONL 文件
-│  ~/.claude/     │
-│  ~/.codex/      │
-│  ~/.openclaw/   │
-└────────┬────────┘
-         │
-         │ 文件修改事件
-         ↓
-┌─────────────────┐
-│  增量读取器      │  记录字节偏移，只读新增行
-│  fileOffsets    │
-└────────┬────────┘
-         │
-         │ 解析 JSONL
-         ↓
-┌─────────────────┐
-│  Session 管理器  │  维护状态机，管理生命周期
-│  sessions Map   │
-└────────┬────────┘
-         │
-         │ WebSocket 推送
-         ↓
-┌─────────────────┐
-│  React 前端      │  实时渲染卡片，动画效果
-│  浏览器         │
-└─────────────────┘
+## 4. 运行时流程
 
-         ↑
-         │ 进程扫描（每 15 秒）
-         │
-┌─────────────────┐
-│  lsof 进程扫描   │  检测工具进程存活状态
-│  activeProcesses│
-└─────────────────┘
+启动流程：
+
+1. 初始化价格服务（`pricing-service`）
+2. 初始化外部用量服务（`external-usage-service`）
+3. 初始化 WebSocket 服务
+4. 首次进程扫描并加载会话
+5. 建立目录监听（Claude/Codex/OpenClaw）
+6. 后台执行历史用量回扫（backfill）
+
+定时任务：
+
+- 每 15 秒：进程扫描（`checkProcesses`）
+- 每 30 秒：空闲会话检查（`checkIdleSessions`）
+- 每 1 小时：价格缓存后台刷新
+- 每 5 分钟：外部用量刷新（Claude/Codex）
+
+## 5. 数据流
+
+```text
+JSONL 文件变化 / 周期进程扫描
+        ↓
+FileMonitor 增量读取新增行
+        ↓
+Parser 解析消息与用量事件
+        ↓
+SessionManager 更新会话状态
+UsageManager 更新聚合统计
+        ↓
+WebSocket 广播 init/session/message/state/usage
+        ↓
+前端实时渲染
 ```
 
-## 后端架构（模块化设计）
+## 6. 模块结构
 
-**2026-02-15 重构**：后端已从单体 server.js (475行) 重构为模块化架构 (6个模块)。
-
-### 目录结构
-
-```
+```text
 server/
-├── index.js                    # 主入口，协调各模块
-├── websocket.js                # WebSocket 通信层
-├── session-manager.js          # 会话生命周期管理
+├── index.js
+├── websocket.js
+├── session-manager.js
 ├── parsers/
-│   └── claude-code.js         # Claude Code JSONL 解析
-└── monitors/
-    ├── file-monitor.js        # 文件监听 + 增量读取
-    └── process-monitor.js     # 进程扫描
+│   ├── claude-code.js
+│   ├── codex.js
+│   └── openclaw.js
+├── monitors/
+│   ├── file-monitor.js
+│   └── process-monitor.js
+├── usage/
+│   ├── usage-manager.js
+│   ├── pricing-service.js
+│   └── external-usage-service.js
+└── utils/
+    └── logger.js
 ```
 
-### 核心模块
+职责：
 
-#### 1. server/index.js - 主入口
-- 协调所有模块
-- 初始化 HTTP/WebSocket 服务器
-- 设置定时任务（进程扫描、空闲检测）
-- 处理文件变更事件
+- `index.js`：流程编排与调度
+- `websocket.js`：连接管理与广播
+- `session-manager.js`：会话状态机与生命周期
+- `parsers/*`：工具日志解析（消息 + usage）
+- `file-monitor.js`：目录扫描、watch、增量读取
+- `process-monitor.js`：`ps + lsof` 活跃进程与文件映射
+- `usage-manager.js`：全历史聚合与运行中计数
+- `pricing-service.js`：模型价格拉取/缓存/成本计算
+- `external-usage-service.js`：外部用量覆盖（Claude/Codex）
 
-#### 2. server/websocket.js - WebSocket 通信
-- 初始化 WebSocket 服务器
-- 管理客户端连接
-- 广播消息到所有连接的客户端
-- 新客户端连接时同步完整状态
+## 7. WebSocket 协议（概览）
 
-#### 3. server/session-manager.js - 会话管理
-- 维护 sessions Map
-- 管理会话生命周期状态机（ACTIVE → IDLE → COOLING → GONE）
-- 计算动态冷却时间
-- 检测空闲会话和进程退出
+核心消息类型：
 
-#### 4. server/parsers/claude-code.js - Claude Code 解析器
-- 解析 Claude Code JSONL 格式
-- 提取用户和助手消息
-- 编码工作目录路径
-- 获取 session ID 和项目名称
+- `init`
+- `session_init`
+- `message_add`
+- `state_change`
+- `session_remove`
+- `usage_totals`
 
-#### 5. server/monitors/file-monitor.js - 文件监听
-- 增量读取 JSONL 文件（记录字节偏移）
-- 使用 fs.watch 监听目录变化
-- 扫描项目目录发现新会话
-- 管理文件监听器生命周期
+协议细节见 `docs/API.md`。
 
-#### 6. server/monitors/process-monitor.js - 进程监控
-- 扫描系统中的 Claude 进程
-- 使用 lsof 获取进程工作目录
-- 维护活跃进程列表
-- 检测进程退出事件
+## 8. 扩展新工具的最小步骤
 
-### 模块间通信
-
-```
-index.js (主协调器)
-    ├─→ websocket.js (广播消息)
-    ├─→ session-manager.js (管理状态)
-    ├─→ file-monitor.js (监听文件)
-    ├─→ process-monitor.js (扫描进程)
-    └─→ parsers/claude-code.js (解析数据)
-```
-
-### React 前端
-
-- **卡片网格**：响应式布局，按最后活动时间排序
-- **动画系统**：错开入场、呼吸灯、淡出效果
-- **自动滚动**：新消息到达时滚动到底部
-
-## 扩展性设计
-
-### 添加新工具支持
-
-模块化架构使得添加新工具支持变得简单：
-
-1. **创建新的 parser**：在 `server/parsers/` 下创建新文件（如 `codex.js`）
-2. **实现解析函数**：
-   - `parseMessage(line)` - 解析消息格式
-   - `getSessionId(filePath)` - 提取 session ID
-   - `getProjectName(dirPath)` - 获取项目名称
-   - `encodeCwd(cwd)` - 编码工作目录路径
-3. **更新进程监控**：在 `process-monitor.js` 中添加新工具的进程扫描规则
-4. **更新主入口**：在 `server/index.js` 中导入并使用新 parser
-5. **前端适配**：添加工具特定的颜色主题和图标
-
-**示例**：添加 Codex 支持只需创建 `server/parsers/codex.js` 并实现上述接口。
-
-## 性能考虑
-
-- **增量读取**：避免重复解析大文件
-- **按需监听**：只监听有活跃 session 的目录
-- **定时清理**：GONE 状态的 session 自动从内存移除
-- **WebSocket 复用**：所有更新通过同一连接推送
-
-## 未来扩展
-
-**Phase 2 计划：**
-- 添加 Codex 支持（`~/.codex/sessions/`）
-- 添加 OpenClaw 支持（`~/.openclaw/agents/`）
-- 多工具颜色区分
-- 大规模 session 优化（支持数百个并发 session）
+1. 新增 `server/parsers/<tool>.js`（消息 + usage 解析）
+2. 在 `server/index.js` 接入发现逻辑与 `processFile` 调用
+3. 在 `server/usage/usage-manager.js` 验证工具统计聚合
+4. 前端补充工具展示配置
+5. 更新 `README.md`、`docs/API.md`、`docs/ARCHITECTURE.md`

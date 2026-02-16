@@ -1,6 +1,11 @@
 # Agent Arena Monitor — 正式开发规格文档
 
-> 历史说明（2026-02-15 之后）：本文档包含部分重构前术语（如 `server.js`）。当前实际入口为 `server/index.js`，以 `README.md` 与 `docs/` 下文档为准。
+> 历史说明（更新于 2026-02-16）：本文档是设计规格与阶段性实现说明，不是当前运行时真值。当前实现以 `server/index.js`、`README.md`、`docs/ARCHITECTURE.md`、`docs/API.md` 为准。
+>
+> 当前关键事实：
+> - 已支持 `claude-code` / `codex` / `openclaw`
+> - 进程扫描周期为 15 秒，空闲检测周期为 30 秒
+> - 增加了 `server/usage/*` 与 `usage_totals` 实时推送
 
 ## 一、这是什么
 
@@ -753,4 +758,3 @@ Phase 1 完成的标准：
 **重要**：E2E 测试是最终交付的必要条件。只有通过完整的 E2E 测试，才能确保产品质量，Phase 1 才算真正完成。
 
 达到以上标准后，Phase 1 才算真正完成，可以进入 Phase 2。
-

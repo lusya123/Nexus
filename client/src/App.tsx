@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import './App.css'
 import { logger, wsLogger, sessionLogger } from './utils/logger'
 
@@ -9,6 +9,7 @@ interface Message {
 
 type MessageKind = 'text' | 'tool_call' | 'tool_output';
 type ThemeMode = 'light' | 'dark';
+type BreakdownMetric = 'tokens' | 'cost';
 
 interface Session {
   sessionId: string;
@@ -58,6 +59,8 @@ const TOOL_CONFIG: Record<string, { label: string; color: string; borderColor: s
   }
 };
 
+const TOOL_DISPLAY_ORDER = ['claude-code', 'codex', 'openclaw'] as const;
+
 const THEME_STORAGE_KEY = 'nexus-theme-mode';
 
 function getInitialTheme(): ThemeMode {
@@ -102,24 +105,57 @@ function formatUsd(value: number): string {
   return `$${n.toFixed(2)}`;
 }
 
+function getToolLabel(tool: string): string {
+  return TOOL_CONFIG[tool]?.label || tool;
+}
+
 function roundForPrecision(value: number, precision: number): number {
   if (!Number.isFinite(value)) return 0;
   if (precision <= 0) return Math.round(value);
   return Number(value.toFixed(precision));
 }
 
-function getAnimationDuration(delta: number, precision: number): number {
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getAnimationDuration(delta: number, precision: number, updateGapMs: number | null): number {
   if (delta <= 0) return 0;
+  let baseDuration = 0;
+
   if (precision > 0) {
-    if (delta < 0.5) return 260;
-    if (delta < 20) return 420;
-    return 560;
+    if (delta < 0.2) baseDuration = 420;
+    else if (delta < 5) baseDuration = 640;
+    else if (delta < 20) baseDuration = 840;
+    else baseDuration = 1050;
+  } else {
+    if (delta < 10) baseDuration = 360;
+    else if (delta < 1000) baseDuration = 620;
+    else if (delta < 100000) baseDuration = 920;
+    else baseDuration = 1200;
   }
 
-  if (delta < 10) return 260;
-  if (delta < 1000) return 420;
-  if (delta < 100000) return 620;
-  return 820;
+  // Keep the motion perceptible but avoid falling too far behind frequent updates.
+  if (updateGapMs !== null) {
+    const cadenceCap = clamp(Math.round(updateGapMs * 0.9), 240, 1400);
+    return Math.min(baseDuration, cadenceCap);
+  }
+  return baseDuration;
+}
+
+function getDampedProgress(t: number, delta: number, precision: number): number {
+  const progress = clamp(t, 0, 1);
+  const deltaScale = precision > 0
+    ? clamp(delta / 20, 0, 1)
+    : clamp(delta / 5000, 0, 1);
+  const damping = 8.8 - (deltaScale * 2.2);
+  const angular = 10.5 + (deltaScale * 4.5);
+  const raw = 1 - (Math.exp(-damping * progress) * Math.cos(angular * progress));
+  const maxOvershootUnits = precision > 0
+    ? 0.08
+    : clamp(delta * 0.02, 1, 2400);
+  const maxProgress = 1 + (delta > 0 ? (maxOvershootUnits / delta) : 0);
+  return clamp(raw, 0, maxProgress);
 }
 
 interface AnimatedMetricValueProps {
@@ -133,8 +169,10 @@ function AnimatedMetricValue({ value, format, precision = 0 }: AnimatedMetricVal
   const [displayValue, setDisplayValue] = useState<number>(() => roundForPrecision(safeTarget, precision));
   const [isAnimating, setIsAnimating] = useState(false);
   const [direction, setDirection] = useState<'up' | 'down'>('up');
+  const [rollDurationMs, setRollDurationMs] = useState(260);
   const rafRef = useRef<number | null>(null);
   const displayedRef = useRef<number>(roundForPrecision(safeTarget, precision));
+  const lastTargetAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     displayedRef.current = displayValue;
@@ -144,7 +182,12 @@ function AnimatedMetricValue({ value, format, precision = 0 }: AnimatedMetricVal
     const target = roundForPrecision(safeTarget, precision);
     const from = displayedRef.current;
     const delta = Math.abs(target - from);
-    const duration = getAnimationDuration(delta, precision);
+    const now = performance.now();
+    const updateGapMs = lastTargetAtRef.current === null ? null : now - lastTargetAtRef.current;
+    lastTargetAtRef.current = now;
+    const duration = getAnimationDuration(delta, precision, updateGapMs);
+    const nextRollDuration = clamp(Math.round(duration * 0.72), 220, 900);
+    setRollDurationMs(nextRollDuration);
 
     if (delta === 0 || duration === 0) {
       setIsAnimating(false);
@@ -159,17 +202,19 @@ function AnimatedMetricValue({ value, format, precision = 0 }: AnimatedMetricVal
     const startTime = performance.now();
     const tick = (now: number) => {
       const t = Math.min((now - startTime) / duration, 1);
-      const eased = 1 - Math.pow(1 - t, 3);
+      const eased = getDampedProgress(t, delta, precision);
       const nextValue = roundForPrecision(from + (target - from) * eased, precision);
 
-      displayedRef.current = nextValue;
-      setDisplayValue(nextValue);
+      if (nextValue !== displayedRef.current) {
+        displayedRef.current = nextValue;
+        setDisplayValue(nextValue);
+      }
 
       if (t < 1) {
         rafRef.current = requestAnimationFrame(tick);
       } else {
         displayedRef.current = target;
-        setDisplayValue(target);
+        setDisplayValue((prev) => (prev === target ? prev : target));
         setIsAnimating(false);
       }
     };
@@ -184,9 +229,14 @@ function AnimatedMetricValue({ value, format, precision = 0 }: AnimatedMetricVal
     };
   }, [safeTarget, precision]);
 
+  const metricStyle = {
+    '--metric-roll-duration': `${rollDurationMs}ms`
+  } as CSSProperties;
+
   return (
     <div
       className={`metric-value metric-value-animated ${isAnimating ? `is-animating is-${direction}` : ''}`}
+      style={metricStyle}
     >
       {format(displayValue)}
     </div>
@@ -210,6 +260,8 @@ function App() {
   const entryQueueRef = useRef<Session[]>([]);
   const [displayedSessions, setDisplayedSessions] = useState<Set<string>>(new Set());
   const [showToolEvents, setShowToolEvents] = useState(false);
+  const [hoveredBreakdownMetric, setHoveredBreakdownMetric] = useState<BreakdownMetric | null>(null);
+  const [pinnedBreakdownMetric, setPinnedBreakdownMetric] = useState<BreakdownMetric | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -219,6 +271,29 @@ function App() {
       // Ignore localStorage failures.
     }
   }, [theme]);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('.metric-card-interactive')) {
+        setPinnedBreakdownMetric(null);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPinnedBreakdownMetric(null);
+        setHoveredBreakdownMetric(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   // WebSocket connection
   useEffect(() => {
@@ -384,6 +459,41 @@ function App() {
       return a.name.localeCompare(b.name);
     });
 
+  const orderedTools = [
+    ...TOOL_DISPLAY_ORDER,
+    ...Object.keys(usageTotals.byTool).filter(
+      (tool) => !TOOL_DISPLAY_ORDER.includes(tool as typeof TOOL_DISPLAY_ORDER[number])
+    )
+  ];
+
+  const toolBreakdown = orderedTools.map((tool) => {
+    const summary = usageTotals.byTool[tool];
+    return {
+      tool,
+      label: getToolLabel(tool),
+      totalTokens: Number(summary?.totalTokens || 0),
+      totalCostUsd: Number(summary?.totalCostUsd || 0)
+    };
+  });
+  const activeBreakdownMetric = pinnedBreakdownMetric ?? hoveredBreakdownMetric;
+
+  const handleBreakdownCardClick = (metric: BreakdownMetric) => {
+    setPinnedBreakdownMetric((prev) => (prev === metric ? null : metric));
+  };
+
+  const handleBreakdownCardKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>, metric: BreakdownMetric) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      handleBreakdownCardClick(metric);
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      setPinnedBreakdownMetric(null);
+      setHoveredBreakdownMetric(null);
+    }
+  };
+
   return (
     <div className="app">
       <header className="header">
@@ -396,27 +506,71 @@ function App() {
           <h1>Nexus - Agent Arena Monitor</h1>
         </div>
         <div className="header-metrics">
-          <div className="metric-card">
-            <div className="metric-label">Running Agents</div>
-            <AnimatedMetricValue
-              value={usageTotals.totals.runningAgents}
-              format={formatTokens}
-            />
-          </div>
-          <div className="metric-card">
-            <div className="metric-label">Total Tokens</div>
-            <AnimatedMetricValue
-              value={usageTotals.totals.totalTokens}
-              format={formatTokens}
-            />
-          </div>
-          <div className="metric-card">
-            <div className="metric-label">Total Cost (USD)</div>
-            <AnimatedMetricValue
-              value={usageTotals.totals.totalCostUsd}
-              format={formatUsd}
-              precision={2}
-            />
+          <div className="metric-cards-grid">
+            <div className="metric-card metric-card-summary">
+              <div className="metric-label">Running Agents</div>
+              <AnimatedMetricValue
+                value={usageTotals.totals.runningAgents}
+                format={formatTokens}
+              />
+            </div>
+            <div
+              className={`metric-card metric-card-summary metric-card-interactive ${activeBreakdownMetric === 'tokens' ? 'is-open' : ''}`}
+              role="button"
+              tabIndex={0}
+              aria-expanded={activeBreakdownMetric === 'tokens'}
+              aria-haspopup="dialog"
+              onMouseEnter={() => setHoveredBreakdownMetric('tokens')}
+              onMouseLeave={() => setHoveredBreakdownMetric((prev) => (prev === 'tokens' ? null : prev))}
+              onClick={() => handleBreakdownCardClick('tokens')}
+              onKeyDown={(event) => handleBreakdownCardKeyDown(event, 'tokens')}
+            >
+              <div className="metric-label">Total Tokens</div>
+              <AnimatedMetricValue
+                value={usageTotals.totals.totalTokens}
+                format={formatTokens}
+              />
+              {activeBreakdownMetric === 'tokens' && (
+                <div className="metric-hover-breakdown" role="dialog" aria-label="Total tokens breakdown by tool">
+                  <div className="metric-hover-breakdown-title">By Tool</div>
+                  {toolBreakdown.map((item) => (
+                    <div key={`tokens-hover-${item.tool}`} className="metric-hover-breakdown-row">
+                      <span className="metric-hover-breakdown-label">{item.label}</span>
+                      <span className="metric-hover-breakdown-value">{formatTokens(item.totalTokens)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div
+              className={`metric-card metric-card-summary metric-card-interactive ${activeBreakdownMetric === 'cost' ? 'is-open' : ''}`}
+              role="button"
+              tabIndex={0}
+              aria-expanded={activeBreakdownMetric === 'cost'}
+              aria-haspopup="dialog"
+              onMouseEnter={() => setHoveredBreakdownMetric('cost')}
+              onMouseLeave={() => setHoveredBreakdownMetric((prev) => (prev === 'cost' ? null : prev))}
+              onClick={() => handleBreakdownCardClick('cost')}
+              onKeyDown={(event) => handleBreakdownCardKeyDown(event, 'cost')}
+            >
+              <div className="metric-label">Total Cost (USD)</div>
+              <AnimatedMetricValue
+                value={usageTotals.totals.totalCostUsd}
+                format={formatUsd}
+                precision={2}
+              />
+              {activeBreakdownMetric === 'cost' && (
+                <div className="metric-hover-breakdown" role="dialog" aria-label="Total cost breakdown by tool">
+                  <div className="metric-hover-breakdown-title">By Tool</div>
+                  {toolBreakdown.map((item) => (
+                    <div key={`cost-hover-${item.tool}`} className="metric-hover-breakdown-row">
+                      <span className="metric-hover-breakdown-label">{item.label}</span>
+                      <span className="metric-hover-breakdown-value">{formatUsd(item.totalCostUsd)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           {usageTotals.backfill.status === 'running' && (
             <div className="metric-backfill">

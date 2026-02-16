@@ -102,6 +102,97 @@ function formatUsd(value: number): string {
   return `$${n.toFixed(2)}`;
 }
 
+function roundForPrecision(value: number, precision: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (precision <= 0) return Math.round(value);
+  return Number(value.toFixed(precision));
+}
+
+function getAnimationDuration(delta: number, precision: number): number {
+  if (delta <= 0) return 0;
+  if (precision > 0) {
+    if (delta < 0.5) return 260;
+    if (delta < 20) return 420;
+    return 560;
+  }
+
+  if (delta < 10) return 260;
+  if (delta < 1000) return 420;
+  if (delta < 100000) return 620;
+  return 820;
+}
+
+interface AnimatedMetricValueProps {
+  value: number;
+  format: (value: number) => string;
+  precision?: number;
+}
+
+function AnimatedMetricValue({ value, format, precision = 0 }: AnimatedMetricValueProps) {
+  const safeTarget = Number.isFinite(Number(value)) ? Number(value) : 0;
+  const [displayValue, setDisplayValue] = useState<number>(() => roundForPrecision(safeTarget, precision));
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [direction, setDirection] = useState<'up' | 'down'>('up');
+  const rafRef = useRef<number | null>(null);
+  const displayedRef = useRef<number>(roundForPrecision(safeTarget, precision));
+
+  useEffect(() => {
+    displayedRef.current = displayValue;
+  }, [displayValue]);
+
+  useEffect(() => {
+    const target = roundForPrecision(safeTarget, precision);
+    const from = displayedRef.current;
+    const delta = Math.abs(target - from);
+    const duration = getAnimationDuration(delta, precision);
+
+    if (delta === 0 || duration === 0) {
+      setIsAnimating(false);
+      setDisplayValue(target);
+      displayedRef.current = target;
+      return;
+    }
+
+    setDirection(target >= from ? 'up' : 'down');
+    setIsAnimating(true);
+
+    const startTime = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min((now - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const nextValue = roundForPrecision(from + (target - from) * eased, precision);
+
+      displayedRef.current = nextValue;
+      setDisplayValue(nextValue);
+
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(tick);
+      } else {
+        displayedRef.current = target;
+        setDisplayValue(target);
+        setIsAnimating(false);
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [safeTarget, precision]);
+
+  return (
+    <div
+      className={`metric-value metric-value-animated ${isAnimating ? `is-animating is-${direction}` : ''}`}
+    >
+      {format(displayValue)}
+    </div>
+  );
+}
+
 function App() {
   const [sessions, setSessions] = useState<Map<string, Session>>(new Map());
   const [usageTotals, setUsageTotals] = useState<UsageTotalsPayload>(createEmptyUsageTotals);
@@ -307,15 +398,25 @@ function App() {
         <div className="header-metrics">
           <div className="metric-card">
             <div className="metric-label">Running Agents</div>
-            <div className="metric-value">{formatTokens(usageTotals.totals.runningAgents)}</div>
+            <AnimatedMetricValue
+              value={usageTotals.totals.runningAgents}
+              format={formatTokens}
+            />
           </div>
           <div className="metric-card">
             <div className="metric-label">Total Tokens</div>
-            <div className="metric-value">{formatTokens(usageTotals.totals.totalTokens)}</div>
+            <AnimatedMetricValue
+              value={usageTotals.totals.totalTokens}
+              format={formatTokens}
+            />
           </div>
           <div className="metric-card">
             <div className="metric-label">Total Cost (USD)</div>
-            <div className="metric-value">{formatUsd(usageTotals.totals.totalCostUsd)}</div>
+            <AnimatedMetricValue
+              value={usageTotals.totals.totalCostUsd}
+              format={formatUsd}
+              precision={2}
+            />
           </div>
           {usageTotals.backfill.status === 'running' && (
             <div className="metric-backfill">

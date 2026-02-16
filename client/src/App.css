@@ -70,6 +70,47 @@
   font-weight: 700;
   color: var(--color-text-primary);
   font-family: 'Space Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-value-animated {
+  display: inline-block;
+  transform: translateY(0);
+  will-change: transform, opacity, filter;
+}
+
+.metric-value-animated.is-animating.is-up {
+  animation: metric-roll-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.metric-value-animated.is-animating.is-down {
+  animation: metric-roll-down 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes metric-roll-up {
+  from {
+    transform: translateY(7px);
+    opacity: 0.55;
+    filter: blur(1px);
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes metric-roll-down {
+  from {
+    transform: translateY(-7px);
+    opacity: 0.55;
+    filter: blur(1px);
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+    filter: blur(0);
+  }
 }
 
 .metric-backfill {

@@ -1,8 +1,12 @@
 import assert from 'assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { parseUsageEvent as parseCodexUsage } from '../server/parsers/codex.js';
 import { parseUsageEvent as parseClaudeUsage } from '../server/parsers/claude-code.js';
 import { parseUsageEvent as parseOpenClawUsage } from '../server/parsers/openclaw.js';
+import { getProjectName as getOpenClawProjectName } from '../server/parsers/openclaw.js';
 
 let passed = 0;
 let failed = 0;
@@ -125,6 +129,26 @@ run('openclaw parser extracts usage and direct cost', () => {
   });
 });
 
+run('openclaw project name prefers session cwd basename over agent folder', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-openclaw-'));
+  const sessionPath = path.join(tmpDir, 'session.jsonl');
+  fs.writeFileSync(
+    sessionPath,
+    `${JSON.stringify({ type: 'session', id: 's1', cwd: '/Users/alice/work/my-repo' })}\n`,
+    'utf8'
+  );
+
+  const name = getOpenClawProjectName('/Users/alice/.openclaw/agents/May/sessions', sessionPath);
+  assert.equal(name, 'my-repo');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+run('openclaw project name falls back to agent folder when header missing', () => {
+  const name = getOpenClawProjectName('/Users/alice/.openclaw/agents/May/sessions', '/tmp/missing.jsonl');
+  assert.equal(name, 'May');
+});
+
 console.log('---');
 console.log(`Passed: ${passed}`);
 console.log(`Failed: ${failed}`);
@@ -132,4 +156,3 @@ console.log(`Failed: ${failed}`);
 if (failed > 0) {
   process.exit(1);
 }
-

@@ -186,14 +186,15 @@ function processFile(filePath, parser, toolName) {
 
   const sessionId = parser.getSessionId(filePath);
   const projectDir = path.resolve(path.dirname(filePath));
-  const projectName = parser.getProjectName(path.dirname(filePath));
   const lines = FileMonitor.readIncrementalLines(filePath, 'live-monitor');
   const parsedMessages = parseMessagesFromLines(lines, parser);
   const usageChanged = ingestUsageFromLines(lines, parser, toolName, sessionId);
   let runningChanged = false;
+  const existingSession = SessionManager.getSession(sessionId);
 
   // Check if this is a new session
-  if (!SessionManager.getSession(sessionId)) {
+  if (!existingSession) {
+    const projectName = parser.getProjectName(path.dirname(filePath), filePath);
     SessionManager.createSession(
       sessionId,
       toolName,
@@ -218,7 +219,7 @@ function processFile(filePath, parser, toolName) {
       state: 'active'
     });
   } else {
-    const session = SessionManager.getSession(sessionId);
+    const session = existingSession;
     if (session && lines.length > 0 && session.state === 'idle') {
       SessionManager.setSessionState(sessionId, 'active', handleStateChange);
     }

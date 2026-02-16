@@ -1,8 +1,57 @@
 import path from 'path';
 import os from 'os';
+import fs from 'fs';
 
 // OpenClaw agents 目录
 export const OPENCLAW_AGENTS_DIR = path.join(os.homedir(), '.openclaw', 'agents');
+
+function readFilePrefix(filePath, maxBytes = 64 * 1024) {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const buffer = Buffer.alloc(maxBytes);
+      const bytesRead = fs.readSync(fd, buffer, 0, maxBytes, 0);
+      return buffer.toString('utf8', 0, bytesRead);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return '';
+  }
+}
+
+function getSessionNameFromFile(filePath) {
+  if (!filePath) return null;
+
+  const text = readFilePrefix(filePath);
+  if (!text) return null;
+
+  const lines = text.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj?.type !== 'session') continue;
+
+      const explicitName = typeof obj.name === 'string' ? obj.name.trim() : '';
+      if (explicitName) return explicitName;
+
+      const cwd = typeof obj.cwd === 'string' ? obj.cwd.trim() : '';
+      if (!cwd) return null;
+
+      const normalized = cwd.replace(/[\\/]+$/, '');
+      const base = path.basename(normalized);
+      if (base && base !== '.' && base !== path.sep) return base;
+      return normalized || cwd;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
 
 function safeSnippet(s, maxLen = 180) {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -128,7 +177,12 @@ export function getSessionId(filePath) {
 }
 
 // 从目录路径提取项目名称
-export function getProjectName(dirPath) {
+export function getProjectName(dirPath, filePath) {
+  // Prefer per-session metadata in the file header to avoid collapsing all
+  // sessions under the same agent directory label.
+  const sessionName = getSessionNameFromFile(filePath);
+  if (sessionName) return sessionName;
+
   // 从 agents/{agentName}/sessions 提取 agentName
   const parts = dirPath.split(path.sep);
   const sessionsIndex = parts.lastIndexOf('sessions');

@@ -21,6 +21,55 @@ const FALLBACK_PRICING = {
     inputPerMillion: 1.25,
     outputPerMillion: 10,
     cacheReadPerMillion: 0.125
+  },
+  // Anthropic Claude fallback (used when remote pricing and local cache are unavailable).
+  'claude-opus-4-6': {
+    inputPerMillion: 15,
+    outputPerMillion: 75,
+    cacheReadPerMillion: 1.5,
+    cacheWritePerMillion: 18.75
+  },
+  'claude-opus-4.6': {
+    inputPerMillion: 15,
+    outputPerMillion: 75,
+    cacheReadPerMillion: 1.5,
+    cacheWritePerMillion: 18.75
+  },
+  'claude-opus-4-5': {
+    inputPerMillion: 15,
+    outputPerMillion: 75,
+    cacheReadPerMillion: 1.5,
+    cacheWritePerMillion: 18.75
+  },
+  'claude-opus-4': {
+    inputPerMillion: 15,
+    outputPerMillion: 75,
+    cacheReadPerMillion: 1.5,
+    cacheWritePerMillion: 18.75
+  },
+  'claude-sonnet-4-5': {
+    inputPerMillion: 3,
+    outputPerMillion: 15,
+    cacheReadPerMillion: 0.3,
+    cacheWritePerMillion: 3.75
+  },
+  'claude-sonnet-4': {
+    inputPerMillion: 3,
+    outputPerMillion: 15,
+    cacheReadPerMillion: 0.3,
+    cacheWritePerMillion: 3.75
+  },
+  'claude-haiku-4-5': {
+    inputPerMillion: 1,
+    outputPerMillion: 5,
+    cacheReadPerMillion: 0.1,
+    cacheWritePerMillion: 1.25
+  },
+  'claude-haiku-4': {
+    inputPerMillion: 1,
+    outputPerMillion: 5,
+    cacheReadPerMillion: 0.1,
+    cacheWritePerMillion: 1.25
   }
 };
 
@@ -135,11 +184,40 @@ function getModelAliases(modelName) {
   const raw = String(modelName || '').trim().toLowerCase();
   if (!raw) return [];
 
-  const aliases = new Set([raw]);
-  aliases.add(raw.replace(/-20\d{6,}$/g, ''));
-  aliases.add(raw.replace(/-(\d)-(\d)(?=-|$)/g, '.$2'));
+  const aliases = new Set();
+  const queue = [];
 
-  return Array.from(aliases).filter(Boolean);
+  const add = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized || aliases.has(normalized)) return;
+    aliases.add(normalized);
+    queue.push(normalized);
+  };
+
+  add(raw);
+
+  // Provider-prefixed model names like "anthropic/claude-opus-4-6".
+  const slashParts = raw.split('/').map(part => part.trim()).filter(Boolean);
+  if (slashParts.length > 1) {
+    add(slashParts[slashParts.length - 1]);
+  }
+
+  while (queue.length > 0) {
+    const current = queue.pop();
+    if (!current) continue;
+
+    // Drop date suffixes like "-20251101".
+    add(current.replace(/-20\d{6,}(?=-|$)/g, ''));
+
+    // Normalize thinking suffix variants to base model pricing.
+    add(current.replace(/-thinking(?=-|$)/g, ''));
+
+    // Normalize version separators: "-4-6" <-> "-4.6".
+    add(current.replace(/-(\d)-(\d)(?=-|$)/g, '-$1.$2'));
+    add(current.replace(/-(\d)\.(\d)(?=-|$)/g, '-$1-$2'));
+  }
+
+  return Array.from(aliases);
 }
 
 function readCache() {
@@ -293,4 +371,3 @@ export function __resetForTests() {
   lastFetchedAt = 0;
   refreshPromise = null;
 }
-

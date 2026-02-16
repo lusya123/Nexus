@@ -16,6 +16,38 @@ function isDeletedJsonl(name) {
   return name.includes('.jsonl.deleted.');
 }
 
+function listJsonlFiles(rootDir, { recursive = false } = {}) {
+  const out = [];
+  const stack = [rootDir];
+
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (!dir) continue;
+
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        if (recursive) stack.push(fullPath);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      if (!isJsonlFile(entry.name) || isDeletedJsonl(entry.name)) continue;
+      out.push(fullPath);
+    }
+  }
+
+  return out;
+}
+
 function makeOffsetMapKey(filePath, offsetKey = 'messages') {
   return `${filePath}::${offsetKey}`;
 }
@@ -75,40 +107,31 @@ export function watchProjectDir(projectDir, onFileChange) {
 }
 
 // Scan a project directory for JSONL files
-export function scanProjectDir(projectDir, onFileFound) {
+export function scanProjectDir(projectDir, onFileFound, options = {}) {
   try {
-    const files = fs.readdirSync(projectDir);
-
-    files.forEach(file => {
-      if (isJsonlFile(file) && !isDeletedJsonl(file)) {
-        const filePath = path.join(projectDir, file);
-        onFileFound(filePath);
-      }
-    });
+    const files = listJsonlFiles(projectDir, options);
+    files.forEach(filePath => onFileFound(filePath));
   } catch (error) {
     console.error(`Error scanning ${projectDir}:`, error.message);
   }
 }
 
 // Get the most recently modified JSONL file in a directory
-export function getMostRecentSession(projectDir) {
+export function getMostRecentSession(projectDir, options = {}) {
   try {
-    const files = fs.readdirSync(projectDir);
+    const files = listJsonlFiles(projectDir, options);
     let mostRecentFile = null;
     let mostRecentTime = 0;
 
-    files.forEach(file => {
-      if (isJsonlFile(file) && !isDeletedJsonl(file)) {
-        const filePath = path.join(projectDir, file);
-        try {
-          const stats = fs.statSync(filePath);
-          if (stats.mtimeMs > mostRecentTime) {
-            mostRecentTime = stats.mtimeMs;
-            mostRecentFile = filePath;
-          }
-        } catch (error) {
-          // Skip files that can't be accessed
+    files.forEach(filePath => {
+      try {
+        const stats = fs.statSync(filePath);
+        if (stats.mtimeMs > mostRecentTime) {
+          mostRecentTime = stats.mtimeMs;
+          mostRecentFile = filePath;
         }
+      } catch {
+        // Skip files that can't be accessed
       }
     });
 
@@ -119,14 +142,12 @@ export function getMostRecentSession(projectDir) {
 }
 
 // Get JSONL session files ordered by mtime (newest first)
-export function getSessionFilesByMtime(projectDir) {
+export function getSessionFilesByMtime(projectDir, options = {}) {
   try {
-    const files = fs.readdirSync(projectDir);
+    const files = listJsonlFiles(projectDir, options);
     const items = [];
 
-    for (const file of files) {
-      if (!isJsonlFile(file) || isDeletedJsonl(file)) continue;
-      const filePath = path.join(projectDir, file);
+    for (const filePath of files) {
       try {
         const stats = fs.statSync(filePath);
         if (!stats.isFile()) continue;
@@ -144,9 +165,9 @@ export function getSessionFilesByMtime(projectDir) {
 }
 
 // Get recent JSONL session files under a directory.
-export function getRecentSessionFiles(projectDir, { maxAgeMs, maxCount }) {
+export function getRecentSessionFiles(projectDir, { maxAgeMs, maxCount, recursive = false }) {
   const now = Date.now();
-  const files = getSessionFilesByMtime(projectDir);
+  const files = getSessionFilesByMtime(projectDir, { recursive });
   const out = [];
 
   for (const filePath of files) {
@@ -290,7 +311,7 @@ export function getRecentOpenClawSessionFiles(agentsDir, { maxAgeMs, maxCountPer
 }
 
 // Scan all project directories
-export function scanAllProjects(projectsDir, onFileFound, onDirFound) {
+export function scanAllProjects(projectsDir, onFileFound, onDirFound, options = {}) {
   try {
     if (!fs.existsSync(projectsDir)) {
       console.log('Projects directory not found');
@@ -305,7 +326,7 @@ export function scanAllProjects(projectsDir, onFileFound, onDirFound) {
       try {
         const stat = fs.statSync(projectDir);
         if (stat.isDirectory()) {
-          scanProjectDir(projectDir, onFileFound);
+          scanProjectDir(projectDir, onFileFound, { recursive: Boolean(options.recursive) });
           onDirFound(projectDir);
         }
       } catch (error) {

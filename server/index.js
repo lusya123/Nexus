@@ -14,6 +14,7 @@ import * as ProcessMonitor from './monitors/process-monitor.js';
 import * as SessionManager from './session-manager.js';
 import * as UsageManager from './usage/usage-manager.js';
 import * as PricingService from './usage/pricing-service.js';
+import * as ExternalUsageService from './usage/external-usage-service.js';
 import { logger, sessionLogger, fileLogger, processLogger } from './utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -42,11 +43,17 @@ const OPENCLAW_DISCOVERY_MAX_FILES_PER_AGENT = 3;
 const OPENCLAW_DISCOVERY_MAX_FILES = 12;
 const OPENCLAW_DISCOVERY_MTIME_GRACE_MS = 6 * 60 * 60 * 1000; // keep long-running/silent OpenClaw sessions visible
 const USAGE_BACKFILL_BROADCAST_EVERY = 40;
+const EXTERNAL_USAGE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
+function getUsageTotals() {
+  const base = UsageManager.getUsageTotals();
+  return ExternalUsageService.applyExternalUsageOverrides(base);
+}
 
 function broadcastUsageTotals() {
   broadcast({
     type: 'usage_totals',
-    ...UsageManager.getUsageTotals()
+    ...getUsageTotals()
   });
 }
 
@@ -88,7 +95,8 @@ function collectUsageBackfillEntries() {
   FileMonitor.scanAllProjects(
     ClaudeCodeParser.CLAUDE_PROJECTS_DIR,
     (filePath) => addEntry(filePath, ClaudeCodeParser, 'claude-code'),
-    () => {}
+    () => {},
+    { recursive: true }
   );
 
   FileMonitor.scanCodexSessions(
@@ -256,7 +264,7 @@ function loadClaudeSessionsForProjectDir(projectDir, activeClaudeFiles) {
   const activeInDir = [];
   if (activeClaudeFiles && activeClaudeFiles.size > 0) {
     for (const filePath of activeClaudeFiles) {
-      if (path.resolve(path.dirname(filePath)) === dir) activeInDir.push(filePath);
+      if (isUnderDir(filePath, dir)) activeInDir.push(filePath);
     }
   }
 
@@ -271,7 +279,8 @@ function loadClaudeSessionsForProjectDir(projectDir, activeClaudeFiles) {
   // but avoid loading every historical session in the directory.
   const recent = FileMonitor.getRecentSessionFiles(projectDir, {
     maxAgeMs: CLAUDE_RECENT_MTIME_GRACE_MS,
-    maxCount: CLAUDE_RECENT_MAX_FILES_PER_DIR
+    maxCount: CLAUDE_RECENT_MAX_FILES_PER_DIR,
+    recursive: true
   });
   if (recent.length > 0) {
     for (const filePath of recent) processFile(filePath, ClaudeCodeParser, 'claude-code');
@@ -279,7 +288,7 @@ function loadClaudeSessionsForProjectDir(projectDir, activeClaudeFiles) {
   }
 
   // Last resort: show the newest single JSONL.
-  const mostRecent = FileMonitor.getMostRecentSession(projectDir);
+  const mostRecent = FileMonitor.getMostRecentSession(projectDir, { recursive: true });
   if (mostRecent) processFile(mostRecent, ClaudeCodeParser, 'claude-code');
 }
 
@@ -370,16 +379,17 @@ async function checkProcesses() {
   const claudeActiveFiles = new Set();
   for (const dir of claudeActiveDirs) {
     const dirAbs = path.resolve(dir);
-    const lsofInDir = Array.from(claudeActiveFilesFromLsof).filter(p => path.resolve(path.dirname(p)) === dirAbs);
+    const lsofInDir = Array.from(claudeActiveFilesFromLsof).filter(p => isUnderDir(p, dirAbs));
     const recentInDir = FileMonitor.getRecentSessionFiles(dirAbs, {
       maxAgeMs: CLAUDE_RECENT_MTIME_GRACE_MS,
-      maxCount: CLAUDE_RECENT_MAX_FILES_PER_DIR
+      maxCount: CLAUDE_RECENT_MAX_FILES_PER_DIR,
+      recursive: true
     }).map(p => path.resolve(p));
 
     const combined = new Set([...lsofInDir, ...recentInDir]);
     if (combined.size === 0) {
       // If we can't map to a file at all, still show something for the active dir.
-      const mostRecent = FileMonitor.getMostRecentSession(dirAbs);
+      const mostRecent = FileMonitor.getMostRecentSession(dirAbs, { recursive: true });
       if (mostRecent) claudeActiveFiles.add(path.resolve(mostRecent));
       continue;
     }
@@ -456,6 +466,11 @@ async function checkProcesses() {
 
   processLogger.processCheck(claudeActiveDirs.size, codexActiveDirs.size, openclawActiveDirs.size);
 
+  // Ensure active Claude sessions are loaded periodically even when no watcher event is fired.
+  for (const filePath of claudeActiveFiles) {
+    processFile(filePath, ClaudeCodeParser, 'claude-code');
+  }
+
   // Ensure active Codex sessions are loaded even when a new YYYY/MM/DD directory appears
   // after startup (directory watchers are attached only to known day folders).
   for (const filePath of codexActiveFiles) {
@@ -481,12 +496,13 @@ server.listen(PORT, async () => {
   logger.serverStarted(PORT, 0);
 
   await PricingService.initPricingService();
+  await ExternalUsageService.initExternalUsageService();
 
   // Initialize WebSocket
   initWebSocket(
     server,
     () => SessionManager.getAllSessions(),
-    () => UsageManager.getUsageTotals()
+    () => getUsageTotals()
   );
 
   // Step 1: Scan processes FIRST to get active project directories
@@ -504,7 +520,8 @@ server.listen(PORT, async () => {
     () => {}, // Don't process files during scan
     (projectDir) => FileMonitor.watchProjectDir(projectDir, (filePath) =>
       processFile(filePath, ClaudeCodeParser, 'claude-code')
-    )
+    ),
+    { recursive: true }
   );
 
   // Scan Codex sessions
@@ -546,4 +563,13 @@ server.listen(PORT, async () => {
   setInterval(() => {
     PricingService.refreshPricingInBackground().catch(() => {});
   }, 60 * 60 * 1000);
+
+  // Keep Claude/Codex totals aligned with ccusage tools.
+  setInterval(() => {
+    ExternalUsageService.refreshExternalUsage()
+      .then((changed) => {
+        if (changed) broadcastUsageTotals();
+      })
+      .catch(() => {});
+  }, EXTERNAL_USAGE_REFRESH_INTERVAL_MS);
 });

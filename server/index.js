@@ -12,6 +12,8 @@ import * as OpenClawParser from './parsers/openclaw.js';
 import * as FileMonitor from './monitors/file-monitor.js';
 import * as ProcessMonitor from './monitors/process-monitor.js';
 import * as SessionManager from './session-manager.js';
+import * as UsageManager from './usage/usage-manager.js';
+import * as PricingService from './usage/pricing-service.js';
 import { logger, sessionLogger, fileLogger, processLogger } from './utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -39,6 +41,135 @@ const CODEX_DISCOVERY_MTIME_GRACE_MS = 30 * 60 * 1000; // periodically discover 
 const OPENCLAW_DISCOVERY_MAX_FILES_PER_AGENT = 3;
 const OPENCLAW_DISCOVERY_MAX_FILES = 12;
 const OPENCLAW_DISCOVERY_MTIME_GRACE_MS = 6 * 60 * 60 * 1000; // keep long-running/silent OpenClaw sessions visible
+const USAGE_BACKFILL_BROADCAST_EVERY = 40;
+
+function broadcastUsageTotals() {
+  broadcast({
+    type: 'usage_totals',
+    ...UsageManager.getUsageTotals()
+  });
+}
+
+function parseMessagesFromLines(lines, parser) {
+  if (!Array.isArray(lines) || lines.length === 0) return [];
+  return lines.map(line => parser.parseMessage(line)).filter(Boolean);
+}
+
+function ingestUsageFromLines(lines, parser, toolName, sessionId) {
+  if (!parser.parseUsageEvent || !Array.isArray(lines) || lines.length === 0) return false;
+
+  let changed = false;
+  for (const line of lines) {
+    const event = parser.parseUsageEvent(line);
+    if (!event) continue;
+    const applied = UsageManager.ingestUsageEvent({
+      sessionId,
+      tool: toolName,
+      event,
+      calculateCostUsd: PricingService.calculateCostUsd
+    });
+    if (applied) changed = true;
+  }
+
+  return changed;
+}
+
+function collectUsageBackfillEntries() {
+  const entries = [];
+  const seen = new Set();
+
+  const addEntry = (filePath, parser, toolName) => {
+    const resolved = path.resolve(filePath);
+    if (seen.has(resolved)) return;
+    seen.add(resolved);
+    entries.push({ filePath: resolved, parser, toolName });
+  };
+
+  FileMonitor.scanAllProjects(
+    ClaudeCodeParser.CLAUDE_PROJECTS_DIR,
+    (filePath) => addEntry(filePath, ClaudeCodeParser, 'claude-code'),
+    () => {}
+  );
+
+  FileMonitor.scanCodexSessions(
+    CodexParser.CODEX_SESSIONS_DIR,
+    (filePath) => addEntry(filePath, CodexParser, 'codex'),
+    () => {},
+    { silent: true }
+  );
+
+  FileMonitor.scanOpenClawAgents(
+    OpenClawParser.OPENCLAW_AGENTS_DIR,
+    (filePath) => addEntry(filePath, OpenClawParser, 'openclaw'),
+    () => {}
+  );
+
+  return entries;
+}
+
+async function runUsageBackfill() {
+  const entries = collectUsageBackfillEntries();
+  const totalFiles = entries.length;
+
+  UsageManager.setBackfillProgress({
+    status: 'running',
+    scannedFiles: 0,
+    totalFiles
+  });
+  broadcastUsageTotals();
+
+  let scannedFiles = 0;
+  let usageChangedSinceLastBroadcast = false;
+
+  for (const entry of entries) {
+    scannedFiles += 1;
+    const { filePath, parser, toolName } = entry;
+    const sessionId = parser.getSessionId(filePath);
+
+    let lines = [];
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      lines = content.split('\n').filter(line => line.trim());
+    } catch {
+      // Skip unreadable files.
+    }
+
+    if (ingestUsageFromLines(lines, parser, toolName, sessionId)) {
+      usageChangedSinceLastBroadcast = true;
+    }
+
+    const progressChanged = UsageManager.setBackfillProgress({
+      status: 'running',
+      scannedFiles,
+      totalFiles
+    });
+
+    if (
+      usageChangedSinceLastBroadcast ||
+      progressChanged ||
+      scannedFiles === totalFiles
+    ) {
+      if (
+        scannedFiles % USAGE_BACKFILL_BROADCAST_EVERY === 0 ||
+        scannedFiles === totalFiles
+      ) {
+        broadcastUsageTotals();
+        usageChangedSinceLastBroadcast = false;
+      }
+    }
+
+    if (scannedFiles % 20 === 0) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+
+  UsageManager.setBackfillProgress({
+    status: 'done',
+    scannedFiles: totalFiles,
+    totalFiles
+  });
+  broadcastUsageTotals();
+}
 
 // Process a JSONL file
 function processFile(filePath, parser, toolName) {
@@ -48,20 +179,24 @@ function processFile(filePath, parser, toolName) {
   const sessionId = parser.getSessionId(filePath);
   const projectDir = path.resolve(path.dirname(filePath));
   const projectName = parser.getProjectName(path.dirname(filePath));
+  const lines = FileMonitor.readIncrementalLines(filePath, 'live-monitor');
+  const parsedMessages = parseMessagesFromLines(lines, parser);
+  const usageChanged = ingestUsageFromLines(lines, parser, toolName, sessionId);
+  let runningChanged = false;
 
   // Check if this is a new session
   if (!SessionManager.getSession(sessionId)) {
-    const session = SessionManager.createSession(
+    SessionManager.createSession(
       sessionId,
       toolName,
       projectName,
       filePath,
       projectDir
     );
+    runningChanged = UsageManager.upsertLiveSession(sessionId, toolName, 'active');
 
-    // Read all existing messages
-    const parsed = FileMonitor.readIncremental(filePath, parser.parseMessage);
-    const appended = SessionManager.addMessages(sessionId, parsed) || [];
+    // Read and append messages from incremental lines.
+    const appended = SessionManager.addMessages(sessionId, parsedMessages) || [];
 
     sessionLogger.sessionDiscovered(sessionId, projectName, toolName, filePath);
 
@@ -75,17 +210,13 @@ function processFile(filePath, parser, toolName) {
       state: 'active'
     });
   } else {
-    // Read incremental messages
-    const parsed = FileMonitor.readIncremental(filePath, parser.parseMessage);
+    const session = SessionManager.getSession(sessionId);
+    if (session && lines.length > 0 && session.state === 'idle') {
+      SessionManager.setSessionState(sessionId, 'active', handleStateChange);
+    }
 
-    if (parsed.length > 0) {
-      const appended = SessionManager.addMessages(sessionId, parsed) || [];
-
-      // Set to ACTIVE if it was IDLE (even if the new content was a deduped retry).
-      const session = SessionManager.getSession(sessionId);
-      if (session.state === 'idle') {
-        SessionManager.setSessionState(sessionId, 'active', handleStateChange);
-      }
+    if (parsedMessages.length > 0) {
+      const appended = SessionManager.addMessages(sessionId, parsedMessages) || [];
 
       if (appended.length > 0) {
         // Broadcast each new message
@@ -100,6 +231,10 @@ function processFile(filePath, parser, toolName) {
 
       sessionLogger.sessionMessages(sessionId, toolName, appended.length);
     }
+  }
+
+  if (usageChanged || runningChanged) {
+    broadcastUsageTotals();
   }
 }
 
@@ -197,12 +332,20 @@ function handleStateChange(sessionId, newState, options) {
       type: 'session_remove',
       sessionId
     });
+
+    if (UsageManager.removeLiveSession(sessionId)) {
+      broadcastUsageTotals();
+    }
   } else {
     broadcast({
       type: 'state_change',
       sessionId,
       state: newState
     });
+
+    if (UsageManager.setLiveSessionState(sessionId, newState)) {
+      broadcastUsageTotals();
+    }
   }
 }
 
@@ -337,11 +480,19 @@ async function checkProcesses() {
 server.listen(PORT, async () => {
   logger.serverStarted(PORT, 0);
 
+  await PricingService.initPricingService();
+
   // Initialize WebSocket
-  initWebSocket(server, () => SessionManager.getAllSessions());
+  initWebSocket(
+    server,
+    () => SessionManager.getAllSessions(),
+    () => UsageManager.getUsageTotals()
+  );
 
   // Step 1: Scan processes FIRST to get active project directories
   await checkProcesses();
+  UsageManager.syncLiveSessions(SessionManager.getAllSessions());
+  broadcastUsageTotals();
 
   const sessionCount = SessionManager.getAllSessions().length;
   logger.info('Initial session load completed', { sessions: sessionCount });
@@ -374,6 +525,15 @@ server.listen(PORT, async () => {
     )
   );
 
+  // Build all-history usage totals in the background.
+  runUsageBackfill().catch((error) => {
+    logger.error('Usage backfill failed', { error: error?.message || String(error) });
+    UsageManager.setBackfillProgress({
+      status: 'done'
+    });
+    broadcastUsageTotals();
+  });
+
   // Scan processes every 15 seconds
   setInterval(checkProcesses, 15000);
 
@@ -381,4 +541,9 @@ server.listen(PORT, async () => {
   setInterval(() => {
     SessionManager.checkIdleSessions(handleStateChange);
   }, 30000);
+
+  // Refresh pricing cache in background (24h TTL enforced inside service).
+  setInterval(() => {
+    PricingService.refreshPricingInBackground().catch(() => {});
+  }, 60 * 60 * 1000);
 });

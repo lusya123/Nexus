@@ -84,6 +84,44 @@ export function parseMessage(line) {
   }
 }
 
+// Parse usage/model events from OpenClaw JSONL.
+// Usage typically lives on `obj.message.usage` for `type: "message"` rows.
+export function parseUsageEvent(line) {
+  try {
+    const obj = JSON.parse(line);
+    if (obj?.type !== 'message') return null;
+
+    const message = obj?.message;
+    if (!message || typeof message !== 'object') return null;
+
+    const usage = message.usage;
+    if (!usage || typeof usage !== 'object') return null;
+
+    const eventKey = message.id || obj.id;
+    if (!eventKey) return null;
+
+    const costTotal = usage?.cost?.total;
+
+    return {
+      kind: 'delta',
+      eventKey: String(eventKey),
+      model: message.model ? String(message.model) : null,
+      directCostUsd: Number.isFinite(Number(costTotal)) ? Number(costTotal) : null,
+      tokens: {
+        inputTokens: Number(usage.input || 0),
+        outputTokens: Number(usage.output || 0),
+        cacheReadInputTokens: Number(usage.cacheRead || 0),
+        cacheWriteTokens: Number(usage.cacheWrite || 0),
+        totalTokens: Number.isFinite(Number(usage.totalTokens))
+          ? Number(usage.totalTokens)
+          : undefined
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
 // 从文件路径提取 Session ID
 export function getSessionId(filePath) {
   return path.basename(filePath, '.jsonl');

@@ -17,6 +17,25 @@ const ws = new WebSocket('ws://localhost:3000');
 ```json
 {
   "type": "init",
+  "usageTotals": {
+    "scope": "all_history",
+    "totals": {
+      "runningAgents": 3,
+      "totalTokens": 123456,
+      "totalCostUsd": 12.34
+    },
+    "byTool": {
+      "codex": { "totalTokens": 80000, "totalCostUsd": 9.2, "runningAgents": 1 },
+      "claude-code": { "totalTokens": 30000, "totalCostUsd": 2.1, "runningAgents": 1 },
+      "openclaw": { "totalTokens": 13456, "totalCostUsd": 1.04, "runningAgents": 1 }
+    },
+    "backfill": {
+      "status": "running",
+      "scannedFiles": 120,
+      "totalFiles": 800
+    },
+    "updatedAt": 1771184174000
+  },
   "sessions": [
     {
       "sessionId": "abc123",
@@ -34,6 +53,33 @@ const ws = new WebSocket('ws://localhost:3000');
       "endTime": null
     }
   ]
+}
+```
+
+#### 6. `usage_totals`
+
+Token / 金额统计增量推送（全量历史累计 + 实时新增）。
+
+```json
+{
+  "type": "usage_totals",
+  "scope": "all_history",
+  "totals": {
+    "runningAgents": 4,
+    "totalTokens": 223344,
+    "totalCostUsd": 25.67
+  },
+  "byTool": {
+    "codex": { "totalTokens": 150000, "totalCostUsd": 18.5, "runningAgents": 2 },
+    "claude-code": { "totalTokens": 50000, "totalCostUsd": 4.2, "runningAgents": 1 },
+    "openclaw": { "totalTokens": 23344, "totalCostUsd": 2.97, "runningAgents": 1 }
+  },
+  "backfill": {
+    "status": "done",
+    "scannedFiles": 800,
+    "totalFiles": 800
+  },
+  "updatedAt": 1771184200123
 }
 ```
 
@@ -108,6 +154,30 @@ interface Session {
   startTime: number;
   lastModified: number;
   endTime: number | null;
+}
+```
+
+### UsageTotals
+
+```ts
+interface UsageTotals {
+  scope: 'all_history';
+  totals: {
+    runningAgents: number;   // state in {active, idle}
+    totalTokens: number;     // 全量历史累计 + 实时增量
+    totalCostUsd: number;    // USD
+  };
+  byTool: Record<string, {
+    totalTokens: number;
+    totalCostUsd: number;
+    runningAgents: number;
+  }>;
+  backfill: {
+    status: 'running' | 'done';
+    scannedFiles: number;
+    totalFiles: number;
+  };
+  updatedAt: number; // epoch ms
 }
 ```
 

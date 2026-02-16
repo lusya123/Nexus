@@ -16,10 +16,15 @@ function isDeletedJsonl(name) {
   return name.includes('.jsonl.deleted.');
 }
 
-// Read incremental content from JSONL file
-export function readIncremental(filePath, parseMessageFn) {
+function makeOffsetMapKey(filePath, offsetKey = 'messages') {
+  return `${filePath}::${offsetKey}`;
+}
+
+// Read incremental raw lines from JSONL file with an independent offset key.
+export function readIncrementalLines(filePath, offsetKey = 'messages') {
   try {
-    const offset = fileOffsets.get(filePath) || 0;
+    const mapKey = makeOffsetMapKey(filePath, offsetKey);
+    const offset = fileOffsets.get(mapKey) || 0;
     const stat = fs.statSync(filePath);
 
     if (stat.size <= offset) {
@@ -31,16 +36,18 @@ export function readIncremental(filePath, parseMessageFn) {
     fs.readSync(fd, buf, 0, buf.length, offset);
     fs.closeSync(fd);
 
-    fileOffsets.set(filePath, stat.size);
-
-    const lines = buf.toString('utf-8').split('\n').filter(line => line.trim());
-    const messages = lines.map(parseMessageFn).filter(Boolean);
-
-    return messages;
+    fileOffsets.set(mapKey, stat.size);
+    return buf.toString('utf-8').split('\n').filter(line => line.trim());
   } catch (error) {
     console.error(`Error reading ${filePath}:`, error.message);
     return [];
   }
+}
+
+// Read incremental content from JSONL file
+export function readIncremental(filePath, parseMessageFn) {
+  const lines = readIncrementalLines(filePath, 'messages');
+  return lines.map(parseMessageFn).filter(Boolean);
 }
 
 // Watch a project directory for changes
@@ -313,8 +320,19 @@ export function scanAllProjects(projectsDir, onFileFound, onDirFound) {
 }
 
 // Clear file offset (for testing)
-export function clearOffset(filePath) {
-  fileOffsets.delete(filePath);
+export function clearOffset(filePath, offsetKey = null) {
+  if (offsetKey) {
+    fileOffsets.delete(makeOffsetMapKey(filePath, offsetKey));
+    return;
+  }
+
+  // Backward-compatible behavior: clear all offsets for this file.
+  const prefix = `${filePath}::`;
+  for (const key of fileOffsets.keys()) {
+    if (key.startsWith(prefix)) {
+      fileOffsets.delete(key);
+    }
+  }
 }
 
 // Scan Codex sessions (YYYY/MM/DD directory structure)

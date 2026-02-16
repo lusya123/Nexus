@@ -19,6 +19,8 @@
     "predev:all": "node scripts/ensure-dev-ports.js",
     "dev:all": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm run dev:backend\" \"npm run client\"",
     "test:codex": "node tests/codex-regression.js",
+    "test:usage-parsers": "node tests/usage-parsers-regression.js",
+    "test:usage-manager": "node tests/usage-manager-regression.js",
     "test": "node tests/verify-phase1.js"
   },
   "dependencies": {

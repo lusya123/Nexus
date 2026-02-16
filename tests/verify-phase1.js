@@ -11,6 +11,7 @@ const ws = new WebSocket('ws://localhost:3000');
 
 let testsPassed = 0;
 let testsFailed = 0;
+let seenUsageTotalsEvent = false;
 
 function pass(test) {
   console.log(`✅ ${test}`);
@@ -51,6 +52,12 @@ ws.on('message', (data) => {
     } else {
       fail('Init message missing sessions array');
     }
+
+    if (message.usageTotals && message.usageTotals.totals) {
+      pass('Init message includes usage totals');
+    } else {
+      fail('Init message missing usageTotals');
+    }
   } else if (message.type === 'message_add') {
     pass('Real-time message update received');
     console.log(`   Session: ${message.sessionId.substring(0, 8)}...`);
@@ -59,6 +66,11 @@ ws.on('message', (data) => {
     pass('State change notification received');
     console.log(`   Session: ${message.sessionId.substring(0, 8)}...`);
     console.log(`   New state: ${message.state}`);
+  } else if (message.type === 'usage_totals') {
+    if (!seenUsageTotalsEvent) {
+      pass('Usage totals update received');
+      seenUsageTotalsEvent = true;
+    }
   }
 });
 

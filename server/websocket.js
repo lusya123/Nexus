@@ -4,19 +4,21 @@ import { wsLogger } from './utils/logger.js';
 let wss = null;
 
 // Initialize WebSocket server
-export function initWebSocket(server, getSessionsFn) {
+export function initWebSocket(server, getSessionsFn, getUsageTotalsFn = null) {
   wss = new WebSocketServer({ server });
 
   wss.on('connection', (ws) => {
     // Send current state to newly connected client (dynamically fetch)
     const sessions = getSessionsFn();
+    const usageTotals = getUsageTotalsFn ? getUsageTotalsFn() : null;
 
     wsLogger.wsConnection('connected', wss.clients.size);
     wsLogger.debug('Sending initial state to client', { sessionCount: sessions.length });
 
     ws.send(JSON.stringify({
       type: 'init',
-      sessions: sessions
+      sessions,
+      usageTotals
     }));
 
     ws.on('close', () => {

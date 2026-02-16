@@ -72,6 +72,13 @@ Nexus/
 - **进程扫描**：每 15 秒扫描 Claude 进程，检测退出
 - **状态机**：ACTIVE / IDLE / COOLING / GONE 四种状态
 - **实时推送**：通过 WebSocket 推送到浏览器
+- **Token / 金额看板**：顶部实时显示运行中 Agent、全量历史累计 Token、累计 USD 金额
+
+### Token / 金额统计口径
+
+- **范围**：全量历史累计（启动后回扫本机日志）+ 实时新增
+- **运行中 Agent**：`state in {active, idle}`
+- **金额**：优先在线价表，离线回退本地缓存；未知模型按 0 USD 处理（Token 仍计入）
 
 ## 技术栈
 

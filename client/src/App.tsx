@@ -17,6 +17,28 @@ interface Session {
   state: 'active' | 'idle' | 'cooling' | 'gone';
 }
 
+interface UsageToolSummary {
+  totalTokens: number;
+  totalCostUsd: number;
+  runningAgents: number;
+}
+
+interface UsageTotalsPayload {
+  scope: 'all_history';
+  totals: {
+    runningAgents: number;
+    totalTokens: number;
+    totalCostUsd: number;
+  };
+  byTool: Record<string, UsageToolSummary>;
+  backfill: {
+    status: 'running' | 'done';
+    scannedFiles: number;
+    totalFiles: number;
+  };
+  updatedAt: number;
+}
+
 const TOOL_CONFIG: Record<string, { label: string; color: string; borderColor: string }> = {
   'claude-code': {
     label: 'Claude Code',
@@ -35,8 +57,36 @@ const TOOL_CONFIG: Record<string, { label: string; color: string; borderColor: s
   }
 };
 
+function createEmptyUsageTotals(): UsageTotalsPayload {
+  return {
+    scope: 'all_history',
+    totals: {
+      runningAgents: 0,
+      totalTokens: 0,
+      totalCostUsd: 0
+    },
+    byTool: {},
+    backfill: {
+      status: 'done',
+      scannedFiles: 0,
+      totalFiles: 0
+    },
+    updatedAt: Date.now()
+  };
+}
+
+function formatTokens(value: number): string {
+  return new Intl.NumberFormat('en-US').format(Math.max(0, Math.round(value || 0)));
+}
+
+function formatUsd(value: number): string {
+  const n = Number.isFinite(Number(value)) ? Number(value) : 0;
+  return `$${n.toFixed(2)}`;
+}
+
 function App() {
   const [sessions, setSessions] = useState<Map<string, Session>>(new Map());
+  const [usageTotals, setUsageTotals] = useState<UsageTotalsPayload>(createEmptyUsageTotals);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const wsRef = useRef<WebSocket | null>(null);
   const wsTokenRef = useRef(0); // Monotonic token to ignore events from stale sockets.
@@ -119,6 +169,9 @@ function App() {
         newSessions.set(session.sessionId, session);
       });
       setSessions(newSessions);
+      if (message.usageTotals) {
+        setUsageTotals(message.usageTotals);
+      }
       logger.info('Initialized sessions', { count: message.sessions.length });
 
       entryQueueRef.current = message.sessions.filter(
@@ -178,6 +231,22 @@ function App() {
         newSet.delete(message.sessionId);
         return newSet;
       });
+    } else if (message.type === 'usage_totals') {
+      setUsageTotals({
+        scope: message.scope || 'all_history',
+        totals: {
+          runningAgents: Number(message.totals?.runningAgents || 0),
+          totalTokens: Number(message.totals?.totalTokens || 0),
+          totalCostUsd: Number(message.totals?.totalCostUsd || 0)
+        },
+        byTool: message.byTool || {},
+        backfill: {
+          status: message.backfill?.status || 'done',
+          scannedFiles: Number(message.backfill?.scannedFiles || 0),
+          totalFiles: Number(message.backfill?.totalFiles || 0)
+        },
+        updatedAt: Number(message.updatedAt || Date.now())
+      });
     }
   };
 
@@ -196,6 +265,26 @@ function App() {
         <div className="header-left">
           <img src="/logo-mark-white.png" alt="Nexus Logo" className="header-logo" />
           <h1>Nexus - Agent Arena Monitor</h1>
+        </div>
+        <div className="header-metrics">
+          <div className="metric-card">
+            <div className="metric-label">Running Agents</div>
+            <div className="metric-value">{formatTokens(usageTotals.totals.runningAgents)}</div>
+          </div>
+          <div className="metric-card">
+            <div className="metric-label">Total Tokens</div>
+            <div className="metric-value">{formatTokens(usageTotals.totals.totalTokens)}</div>
+          </div>
+          <div className="metric-card">
+            <div className="metric-label">Total Cost (USD)</div>
+            <div className="metric-value">{formatUsd(usageTotals.totals.totalCostUsd)}</div>
+          </div>
+          {usageTotals.backfill.status === 'running' && (
+            <div className="metric-backfill">
+              Backfilling history...
+              {usageTotals.backfill.totalFiles > 0 ? ` (${usageTotals.backfill.scannedFiles}/${usageTotals.backfill.totalFiles})` : ''}
+            </div>
+          )}
         </div>
         <div className="header-controls">
           <label className="toggle">

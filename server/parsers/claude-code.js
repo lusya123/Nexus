@@ -48,6 +48,36 @@ export function parseMessage(line) {
   }
 }
 
+// Parse usage/model events from Claude Code JSONL.
+// Uses `message.id` as the primary dedupe key, falling back to `uuid`.
+export function parseUsageEvent(line) {
+  try {
+    const obj = JSON.parse(line);
+    const message = obj?.message;
+    if (!message || typeof message !== 'object') return null;
+
+    const usage = message.usage;
+    if (!usage || typeof usage !== 'object') return null;
+
+    const eventKey = message.id || obj.uuid;
+    if (!eventKey) return null;
+
+    return {
+      kind: 'delta',
+      eventKey: String(eventKey),
+      model: message.model ? String(message.model) : null,
+      tokens: {
+        inputTokens: Number(usage.input_tokens || 0),
+        outputTokens: Number(usage.output_tokens || 0),
+        cacheReadInputTokens: Number(usage.cache_read_input_tokens || 0),
+        cacheCreationInputTokens: Number(usage.cache_creation_input_tokens || 0)
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Encode CWD path to project directory name
 export function encodeCwd(cwd) {
   // /Users/xxx/project → -Users-xxx-project

@@ -116,6 +116,42 @@ export function parseMessage(line) {
   }
 }
 
+// Parse usage/model events from Codex JSONL.
+// - model: { type: "turn_context", payload: { model: "..." } }
+// - usage: { type: "event_msg", payload: { type: "token_count", info: { total_token_usage: ... } } }
+export function parseUsageEvent(line) {
+  try {
+    const obj = JSON.parse(line);
+
+    if (obj.type === 'turn_context' && obj.payload?.model) {
+      return {
+        kind: 'model',
+        model: String(obj.payload.model)
+      };
+    }
+
+    if (obj.type === 'event_msg' && obj.payload?.type === 'token_count') {
+      const usage = obj.payload?.info?.total_token_usage;
+      if (!usage || typeof usage !== 'object') return null;
+
+      return {
+        kind: 'snapshot',
+        tokens: {
+          inputTokens: Number(usage.input_tokens || 0),
+          cachedInputTokens: Number(usage.cached_input_tokens || 0),
+          outputTokens: Number(usage.output_tokens || 0),
+          reasoningOutputTokens: Number(usage.reasoning_output_tokens || 0),
+          totalTokens: Number.isFinite(Number(usage.total_tokens)) ? Number(usage.total_tokens) : null
+        }
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // 从文件路径提取 Session ID
 export function getSessionId(filePath) {
   const filename = path.basename(filePath, '.jsonl');

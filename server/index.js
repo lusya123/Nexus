@@ -541,7 +541,6 @@ server.listen(PORT, async () => {
   logger.serverStarted(PORT, 0);
 
   await PricingService.initPricingService();
-  await ExternalUsageService.initExternalUsageService();
 
   // Initialize WebSocket
   initWebSocket(
@@ -549,6 +548,13 @@ server.listen(PORT, async () => {
     () => SessionManager.getAllSessions(),
     () => getUsageTotals()
   );
+
+  // Initialize external usage in background to avoid blocking startup.
+  ExternalUsageService.initExternalUsageService()
+    .then((changed) => {
+      if (changed) broadcastUsageTotals();
+    })
+    .catch(() => {});
 
   // Step 1: Scan processes FIRST to get active project directories
   await checkProcesses();

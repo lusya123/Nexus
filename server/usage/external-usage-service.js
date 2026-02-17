@@ -21,6 +21,7 @@ const LITELLM_PRICING_HISTORY_COMMITS_URL =
 const LITELLM_PRICING_RAW_BY_SHA_URL_PREFIX =
   'https://raw.githubusercontent.com/BerriAI/litellm';
 const PRICING_CACHE_PATH = path.join(process.cwd(), '.nexus-runtime', 'litellm-pricing-cache.json');
+const EXTERNAL_USAGE_CACHE_PATH = path.join(process.cwd(), '.nexus-runtime', 'external-usage-cache.json');
 
 const CLAUDE_PROVIDER_PREFIXES = [
   'anthropic/',
@@ -106,6 +107,58 @@ function roundCost(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Number(n.toFixed(6));
+}
+
+function normalizeUsageSummary(value, sourceFallback) {
+  if (!value || typeof value !== 'object') return null;
+  const totalTokens = Math.round(Number(value.totalTokens || 0));
+  const totalCostUsd = roundCost(value.totalCostUsd || 0);
+  if (!Number.isFinite(totalTokens) || !Number.isFinite(totalCostUsd)) return null;
+  return {
+    totalTokens: Math.max(0, totalTokens),
+    totalCostUsd: Math.max(0, totalCostUsd),
+    source: value.source ? String(value.source) : sourceFallback
+  };
+}
+
+function readExternalUsageCacheFromDisk() {
+  try {
+    if (!fs.existsSync(EXTERNAL_USAGE_CACHE_PATH)) return null;
+    const raw = JSON.parse(fs.readFileSync(EXTERNAL_USAGE_CACHE_PATH, 'utf-8'));
+    if (!raw || typeof raw !== 'object') return null;
+    const claudeCode = normalizeUsageSummary(raw.claudeCode, 'ccusage');
+    const codex = normalizeUsageSummary(raw.codex, '@ccusage/codex');
+    if (!claudeCode && !codex) return null;
+    return {
+      claudeCode,
+      codex,
+      updatedAt: toFiniteNumber(raw.updatedAt) ?? Date.now(),
+      lastError: null
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeExternalUsageCacheToDisk(snapshot) {
+  try {
+    const dir = path.dirname(EXTERNAL_USAGE_CACHE_PATH);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      EXTERNAL_USAGE_CACHE_PATH,
+      JSON.stringify(
+        {
+          claudeCode: snapshot?.claudeCode || null,
+          codex: snapshot?.codex || null,
+          updatedAt: snapshot?.updatedAt || Date.now()
+        },
+        null,
+        2
+      )
+    );
+  } catch {
+    // cache write failures should not break runtime behavior
+  }
 }
 
 function normalizePricingEntries(raw) {
@@ -939,6 +992,7 @@ async function refreshExternalUsageInternal() {
     externalUsage.codex.totalCostUsd !== next.codex.totalCostUsd;
 
   externalUsage = next;
+  writeExternalUsageCacheToDisk(next);
 
   logger.info('External usage refreshed', {
     claudeTokens: next.claudeCode.totalTokens,
@@ -984,7 +1038,15 @@ export async function refreshExternalUsage({ force = false } = {}) {
 }
 
 export async function initExternalUsageService() {
-  await refreshExternalUsage({ force: true });
+  const cached = readExternalUsageCacheFromDisk();
+  if (cached) {
+    externalUsage = {
+      ...externalUsage,
+      ...cached,
+      lastError: null
+    };
+  }
+  return refreshExternalUsage({ force: true });
 }
 
 export function __resetForTests() {

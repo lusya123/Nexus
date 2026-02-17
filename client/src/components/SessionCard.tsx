@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { TOOL_CONFIG } from '../constants/tools';
 import type { Session } from '../types/nexus';
 import { getMessageKind } from '../utils/message-kind';
+import { MarkdownLite } from './MarkdownLite';
 import { ToolEvent } from './ToolEvent';
 
 interface SessionCardProps {
@@ -53,7 +54,9 @@ export function SessionCard({ session, showToolEvents }: SessionCardProps) {
           getMessageKind(message.content) === 'text' ? (
             <div key={idx} className={`message message-${message.role}`}>
               <div className="message-role">{message.role === 'user' ? 'User' : 'Assistant'}</div>
-              <div className="message-content">{message.content}</div>
+              <div className="message-content">
+                <MarkdownLite content={message.content} />
+              </div>
             </div>
           ) : (
             <ToolEvent key={idx} content={message.content} />

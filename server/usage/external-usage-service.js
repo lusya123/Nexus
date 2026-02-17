@@ -8,8 +8,18 @@ import { logger } from '../utils/logger.js';
 
 const REFRESH_MIN_INTERVAL_MS = 60 * 1000;
 const PRICING_CACHE_TTL_MS = 5 * 60 * 1000;
+const PRICING_HISTORY_COMMITS_TTL_MS = 60 * 60 * 1000;
+const PRICING_HISTORY_LOOKBACK_DAYS = 730;
+const PRICING_HISTORY_BUCKET_MS = 24 * 60 * 60 * 1000;
+const PRICING_HISTORY_MAX_PAGES = 12;
+const PRICING_HISTORY_PER_PAGE = 100;
+const PRICING_HISTORY_ENTRY_CACHE_MAX = 24;
 const LITELLM_PRICING_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
+const LITELLM_PRICING_HISTORY_COMMITS_URL =
+  'https://api.github.com/repos/BerriAI/litellm/commits';
+const LITELLM_PRICING_RAW_BY_SHA_URL_PREFIX =
+  'https://raw.githubusercontent.com/BerriAI/litellm';
 const PRICING_CACHE_PATH = path.join(process.cwd(), '.nexus-runtime', 'litellm-pricing-cache.json');
 
 const CLAUDE_PROVIDER_PREFIXES = [
@@ -73,6 +83,14 @@ let pricingState = {
   fetchedAt: 0,
   entries: normalizePricingEntries(FALLBACK_PRICING)
 };
+
+let pricingHistoryState = {
+  fetchedAt: 0,
+  commits: []
+};
+let pricingHistoryRefreshPromise = null;
+const pricingEntriesBySha = new Map();
+const pricingEntriesFetchPromisesBySha = new Map();
 
 function toFiniteNumber(value) {
   const n = Number(value);
@@ -173,6 +191,227 @@ async function ensurePricingEntries() {
     }
     return pricingState.entries;
   }
+}
+
+function toTimestampMs(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // Handle Unix seconds and milliseconds.
+    return value >= 1e12 ? value : value * 1000;
+  }
+  if (typeof value === 'string') {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+function isoDateFromMs(value) {
+  if (!Number.isFinite(value)) return null;
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchLiteLLMPricingCommitsSince(sinceMs) {
+  const out = [];
+  const sinceIso = isoDateFromMs(sinceMs);
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'Nexus'
+  };
+
+  for (let page = 1; page <= PRICING_HISTORY_MAX_PAGES; page += 1) {
+    const url = new URL(LITELLM_PRICING_HISTORY_COMMITS_URL);
+    url.searchParams.set('path', 'model_prices_and_context_window.json');
+    url.searchParams.set('per_page', String(PRICING_HISTORY_PER_PAGE));
+    url.searchParams.set('page', String(page));
+    if (sinceIso) url.searchParams.set('since', sinceIso);
+
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error(`pricing_history_commits_status_${response.status}`);
+    }
+
+    const rows = await response.json();
+    if (!Array.isArray(rows) || rows.length === 0) break;
+
+    for (const row of rows) {
+      const sha = asNonEmptyString(row?.sha);
+      const committedAt = toTimestampMs(row?.commit?.committer?.date);
+      if (!sha || !Number.isFinite(committedAt)) continue;
+      out.push({ sha, committedAt });
+    }
+
+    if (rows.length < PRICING_HISTORY_PER_PAGE) break;
+  }
+
+  out.sort((a, b) => a.committedAt - b.committedAt);
+
+  // Keep one snapshot per UTC day (the latest commit in that day).
+  const daily = new Map();
+  for (const item of out) {
+    const day = new Date(item.committedAt).toISOString().slice(0, 10);
+    daily.set(day, item);
+  }
+
+  return Array.from(daily.values()).sort((a, b) => a.committedAt - b.committedAt);
+}
+
+async function ensurePricingHistoryCommits() {
+  const now = Date.now();
+  if (
+    pricingHistoryState.commits.length > 0 &&
+    (now - pricingHistoryState.fetchedAt) < PRICING_HISTORY_COMMITS_TTL_MS
+  ) {
+    return pricingHistoryState.commits;
+  }
+
+  if (pricingHistoryRefreshPromise) return pricingHistoryRefreshPromise;
+
+  pricingHistoryRefreshPromise = (async () => {
+    const lookbackMs = now - (PRICING_HISTORY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+    try {
+      const commits = await fetchLiteLLMPricingCommitsSince(lookbackMs);
+      if (commits.length > 0) {
+        pricingHistoryState = {
+          fetchedAt: now,
+          commits
+        };
+      } else {
+        pricingHistoryState = {
+          fetchedAt: now,
+          commits: pricingHistoryState.commits
+        };
+      }
+    } catch {
+      pricingHistoryState = {
+        fetchedAt: now,
+        commits: pricingHistoryState.commits
+      };
+    }
+
+    return pricingHistoryState.commits;
+  })();
+
+  try {
+    return await pricingHistoryRefreshPromise;
+  } finally {
+    pricingHistoryRefreshPromise = null;
+  }
+}
+
+function findCommitAtOrBefore(commits, timestampMs) {
+  if (!Array.isArray(commits) || commits.length === 0 || !Number.isFinite(timestampMs)) return null;
+
+  let low = 0;
+  let high = commits.length - 1;
+  let idx = 0;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const ts = commits[mid].committedAt;
+    if (ts <= timestampMs) {
+      idx = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  if (timestampMs < commits[0].committedAt) return commits[0];
+  return commits[idx] || commits[commits.length - 1];
+}
+
+async function fetchLiteLLMPricingBySha(sha) {
+  const url = `${LITELLM_PRICING_RAW_BY_SHA_URL_PREFIX}/${encodeURIComponent(sha)}/model_prices_and_context_window.json`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`pricing_history_fetch_status_${response.status}`);
+  }
+  const raw = await response.json();
+  const entries = normalizePricingEntries(raw);
+  if (entries.size === 0) {
+    throw new Error('pricing_history_empty_dataset');
+  }
+  return entries;
+}
+
+function touchPricingEntriesCache(sha, entries) {
+  if (pricingEntriesBySha.has(sha)) {
+    pricingEntriesBySha.delete(sha);
+  }
+  pricingEntriesBySha.set(sha, entries);
+
+  while (pricingEntriesBySha.size > PRICING_HISTORY_ENTRY_CACHE_MAX) {
+    const oldestKey = pricingEntriesBySha.keys().next().value;
+    if (!oldestKey) break;
+    pricingEntriesBySha.delete(oldestKey);
+  }
+}
+
+async function ensurePricingEntriesBySha(sha) {
+  if (!sha) return null;
+
+  const cached = pricingEntriesBySha.get(sha);
+  if (cached) {
+    touchPricingEntriesCache(sha, cached);
+    return cached;
+  }
+
+  const pending = pricingEntriesFetchPromisesBySha.get(sha);
+  if (pending) return pending;
+
+  const promise = (async () => {
+    try {
+      const entries = await fetchLiteLLMPricingBySha(sha);
+      touchPricingEntriesCache(sha, entries);
+      return entries;
+    } finally {
+      pricingEntriesFetchPromisesBySha.delete(sha);
+    }
+  })();
+
+  pricingEntriesFetchPromisesBySha.set(sha, promise);
+  return promise;
+}
+
+function createHistoricalPricingResolver(currentEntries) {
+  const commitByBucket = new Map();
+
+  return async ({ modelName, timestampMs, providerPrefixes, aliasLookup = null }) => {
+    let selectedEntries = currentEntries;
+
+    if (Number.isFinite(timestampMs)) {
+      const bucket = Math.floor(timestampMs / PRICING_HISTORY_BUCKET_MS);
+      let commit = commitByBucket.get(bucket);
+
+      if (commit === undefined) {
+        const commits = await ensurePricingHistoryCommits();
+        commit = findCommitAtOrBefore(commits, timestampMs);
+        commitByBucket.set(bucket, commit || null);
+      }
+
+      if (commit?.sha) {
+        try {
+          const historicalEntries = await ensurePricingEntriesBySha(commit.sha);
+          if (historicalEntries && historicalEntries.size > 0) {
+            selectedEntries = historicalEntries;
+          }
+        } catch {
+          // Keep current pricing as fallback when a historical snapshot fetch fails.
+        }
+      }
+    }
+
+    const historicalMatch = findModelPricing(selectedEntries, modelName, providerPrefixes, aliasLookup);
+    if (historicalMatch) return historicalMatch;
+    if (selectedEntries !== currentEntries) {
+      return findModelPricing(currentEntries, modelName, providerPrefixes, aliasLookup);
+    }
+    return historicalMatch;
+  };
 }
 
 function buildPricingCandidates(modelName, providerPrefixes) {
@@ -437,7 +676,7 @@ function codexRawToDelta(raw) {
   };
 }
 
-async function computeClaudeCompatibleTotals(pricingEntries) {
+async function computeClaudeCompatibleTotals(resolvePricingForEvent) {
   const roots = getClaudeProjectsRoots();
   const files = roots.flatMap(root => listJsonlFilesRecursively(root));
 
@@ -471,7 +710,12 @@ async function computeClaudeCompatibleTotals(pricingEntries) {
 
       const model = asNonEmptyString(obj?.message?.model);
       if (!model) return;
-      const pricing = findModelPricing(pricingEntries, model, CLAUDE_PROVIDER_PREFIXES);
+      const timestampMs = toTimestampMs(obj?.timestamp);
+      const pricing = await resolvePricingForEvent({
+        modelName: model,
+        timestampMs,
+        providerPrefixes: CLAUDE_PROVIDER_PREFIXES
+      });
       totalCostUsd += calculateClaudeEntryCost(
         {
           input_tokens: inputTokens,
@@ -491,7 +735,7 @@ async function computeClaudeCompatibleTotals(pricingEntries) {
   };
 }
 
-async function computeCodexCompatibleTotals(pricingEntries) {
+async function computeCodexCompatibleTotals(resolvePricingForEvent) {
   const sessionsRoot = getCodexSessionsRoot();
   if (!fs.existsSync(sessionsRoot)) {
     return {
@@ -574,12 +818,13 @@ async function computeCodexCompatibleTotals(pricingEntries) {
 
       totalTokens += delta.totalTokens;
 
-      const pricing = findModelPricing(
-        pricingEntries,
-        model,
-        CODEX_PROVIDER_PREFIXES,
-        CODEX_MODEL_ALIASES
-      );
+      const timestampMs = toTimestampMs(obj?.timestamp);
+      const pricing = await resolvePricingForEvent({
+        modelName: model,
+        timestampMs,
+        providerPrefixes: CODEX_PROVIDER_PREFIXES,
+        aliasLookup: CODEX_MODEL_ALIASES
+      });
       totalCostUsd += calculateCodexDeltaCost(delta, pricing);
 
       if (fallbackModel) {
@@ -671,10 +916,11 @@ export function getExternalUsageSnapshot() {
 
 async function refreshExternalUsageInternal() {
   const pricingEntries = await ensurePricingEntries();
+  const resolvePricingForEvent = createHistoricalPricingResolver(pricingEntries);
 
   const [claudeCode, codex] = await Promise.all([
-    computeClaudeCompatibleTotals(pricingEntries),
-    computeCodexCompatibleTotals(pricingEntries)
+    computeClaudeCompatibleTotals(resolvePricingForEvent),
+    computeCodexCompatibleTotals(resolvePricingForEvent)
   ]);
 
   const next = {
@@ -749,6 +995,13 @@ export function __resetForTests() {
     fetchedAt: 0,
     entries: normalizePricingEntries(FALLBACK_PRICING)
   };
+  pricingHistoryState = {
+    fetchedAt: 0,
+    commits: []
+  };
+  pricingHistoryRefreshPromise = null;
+  pricingEntriesBySha.clear();
+  pricingEntriesFetchPromisesBySha.clear();
 }
 
 export function __setExternalUsageForTests(next) {

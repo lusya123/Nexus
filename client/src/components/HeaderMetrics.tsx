@@ -98,7 +98,7 @@ export function HeaderMetrics({
           alt="Nexus Logo"
           className={`header-logo block h-[34px] w-auto object-contain ${theme === 'light' ? 'header-logo-light' : ''}`}
         />
-        <h1>Nexus - Agent Arena Monitor</h1>
+        <h1>Nexus</h1>
       </div>
 
       <div className="header-metrics flex min-w-[420px] flex-1 flex-col gap-2.5 max-md:order-3 max-md:min-w-0 max-md:w-full">

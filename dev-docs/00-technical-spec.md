@@ -1,4 +1,4 @@
-# Agent Arena Monitor — 正式开发规格文档
+# Nexus — 正式开发规格文档
 
 > 历史说明（更新于 2026-02-16）：本文档是设计规格与阶段性实现说明，不是当前运行时真值。当前实现以 `server/index.js`、`README.md`、`docs/ARCHITECTURE.md`、`docs/API.md` 为准。
 >
@@ -17,13 +17,13 @@
 
 日常同时用 Claude Code、Codex、OpenClaw 工作，每个工具都有多个 session 同时在跑。需要一面监控墙——一眼扫过去就知道每个 session 的状态。
 
-未来 OpenClaw 会编排大量 Claude Code 和 Codex session（几百甚至上千个），Monitor 需要在这个规模下依然清晰可用。
+未来 OpenClaw 会编排大量 Claude Code 和 Codex session（几百甚至上千个），Nexus 需要在这个规模下依然清晰可用。
 
 同时这个画面本身就是最好的内容素材。
 
 ## 三、核心机制：Session 生命周期
 
-这是整个项目的关键设计。Monitor 需要自动判断哪些 session 应该显示、哪些应该移除，不依赖任何手动操作或外部配置。
+这是整个项目的关键设计。Nexus 需要自动判断哪些 session 应该显示、哪些应该移除，不依赖任何手动操作或外部配置。
 
 ### 3.1 活跃判定：进程存活 = Session 存活
 
@@ -142,7 +142,7 @@ done
 
 ## 六、视觉缓冲系统
 
-卡片的出现和消失不是瞬间的，而是有惯性、有质感的。类似 Screen Studio 对鼠标动作做空间维度的缓动，Monitor 对 session 卡片做时间维度的缓动。
+卡片的出现和消失不是瞬间的，而是有惯性、有质感的。类似 Screen Studio 对鼠标动作做空间维度的缓动，Nexus 对 session 卡片做时间维度的缓动。
 
 ### 6.1 错开入场
 
@@ -258,15 +258,15 @@ AI 进步很快，今天费力做的很多东西明天可能就没意义了。�
 
 ### 做随 AI 能力提升受益斜率最大的事
 
-AI 越强 → 同时跑的 session 越多 → Monitor 上的卡片越多 → 画面越震撼。核心体验是"同时看到很多卡片在滚动"，不是"把某一个 session 看得特别清楚"。
+AI 越强 → 同时跑的 session 越多 → Nexus 上的卡片越多 → 画面越震撼。核心体验是"同时看到很多卡片在滚动"，不是"把某一个 session 看得特别清楚"。
 
 ### 做水面上的船，不做固定山头
 
-Monitor 是纯展示层，只依赖一个事实：这些工具把对话存成了 JSONL 文件。工具改了格式就改 parser，出了新工具就加 parser。Monitor 本身不受影响。
+Nexus 是纯展示层，只依赖一个事实：这些工具把对话存成了 JSONL 文件。工具改了格式就改 parser，出了新工具就加 parser。Nexus 本身不受影响。
 
-### Monitor 是镜子，不是记忆
+### Nexus 是镜子，不是记忆
 
-Monitor 忠实反映"进程是否在运行"这个事实。session 的输出是否被消费、是否需要后续处理，是调度方（人或 OpenClaw）的责任，不是 Monitor 的责任。
+Nexus 忠实反映"进程是否在运行"这个事实。session 的输出是否被消费、是否需要后续处理，是调度方（人或 OpenClaw）的责任，不是 Nexus 的责任。
 
 ## 十、技术架构
 
@@ -331,7 +331,7 @@ Monitor 忠实反映"进程是否在运行"这个事实。session 的输出是�
 
 - macOS 环境
 - 文件监听只读增量，不重新解析整个文件
-- 零配置：用户启动 Monitor 后不需要做任何额外设置
+- 零配置：用户启动 Nexus 后不需要做任何额外设置
 - 全自动：session 的出现和消失完全由进程状态 + 文件活动决定
 - 先按最多 30 个同时显示的 session 设计，架构上支持更多
 

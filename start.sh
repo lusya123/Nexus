@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "=========================================="
-echo "Nexus - Agent Arena Monitor"
+echo "Nexus"
 echo "Phase 1: 终端墙"
 echo "=========================================="
 echo ""

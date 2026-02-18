@@ -1,4 +1,4 @@
-# Nexus - Agent Arena Monitor
+# Nexus
 
 实时监控本地 AI Agent 会话（Claude Code / Codex / OpenClaw），并在前端实时展示会话流与聚合 Token / USD 用量。
 

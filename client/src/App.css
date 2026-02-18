@@ -732,3 +732,201 @@
     animation-duration: 0.01ms !important;
   }
 }
+
+
+/* ============================================
+   DENSE MODE
+   ============================================ */
+
+.sessions-grid-dense {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px;
+  padding: 12px;
+  max-width: 100%;
+  margin: 0 auto;
+  align-items: start;
+}
+
+@media (min-width: 1600px) {
+  .sessions-grid-dense {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  }
+}
+
+@media (min-width: 2000px) {
+  .sessions-grid-dense {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .sessions-grid-dense {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 4px;
+    padding: 8px;
+  }
+}
+
+/* Dense card */
+.dense-card {
+  position: relative;
+  background: var(--color-bg-secondary);
+  border: 2px solid var(--color-border);
+  height: 140px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.2s ease;
+}
+
+.dense-card-active {
+  border-color: var(--tool-border, var(--color-primary));
+}
+
+/* Top color bar */
+.dense-card-bar {
+  height: 3px;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.dense-card-active .dense-card-bar {
+  opacity: 1;
+}
+
+/* Compact header */
+.dense-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 2px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.dense-card-tool {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: 'Space Mono', monospace;
+  flex-shrink: 0;
+}
+
+.dense-card-name {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+/* Terminal text surface */
+.dense-card-terminal {
+  flex: 1;
+  overflow: hidden;
+  padding: 2px 6px 4px;
+  position: relative;
+}
+
+/* Fade-out mask at top */
+.dense-card-terminal::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 16px;
+  background: linear-gradient(to bottom, var(--color-bg-secondary), transparent);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.dense-card-text {
+  font-family: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 8px;
+  line-height: 1.35;
+  color: var(--color-text-tertiary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: break-word;
+}
+
+.dense-card-active .dense-card-text {
+  color: var(--color-text-secondary);
+}
+
+/* Bottom activity pulse line */
+.dense-card-pulse {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  opacity: 0.6;
+  animation: dense-pulse-flow 2s ease-in-out infinite;
+}
+
+@keyframes dense-pulse-flow {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scaleX(0.3);
+    transform-origin: left;
+  }
+  50% {
+    opacity: 0.8;
+    transform: scaleX(1);
+    transform-origin: left;
+  }
+}
+
+/* Active card breathing glow for dense mode */
+.dense-card-active {
+  animation: dense-breathe 3s ease-in-out infinite;
+}
+
+@keyframes dense-breathe {
+  0%, 100% {
+    box-shadow: none;
+  }
+  50% {
+    box-shadow: 0 0 8px 1px color-mix(in srgb, var(--tool-color, var(--color-primary)) 25%, transparent);
+  }
+}
+
+/* View mode toggle button */
+.view-mode-btn {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: 'Space Mono', monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 2px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.view-mode-btn:hover {
+  border-color: var(--color-border-light);
+  color: var(--color-text-primary);
+}
+
+.view-mode-btn-active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .dense-card-active,
+  .dense-card-pulse {
+    animation: none;
+  }
+}

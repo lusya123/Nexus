@@ -830,6 +830,12 @@
   overflow: hidden;
   padding: 2px 6px 4px;
   position: relative;
+  font-family: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 8px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: break-word;
 }
 
 /* Fade-out mask at top */
@@ -845,18 +851,27 @@
   pointer-events: none;
 }
 
-.dense-card-text {
-  font-family: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 8px;
-  line-height: 1.35;
+/* Role-based text colors */
+.dense-text-user {
   color: var(--color-text-tertiary);
-  white-space: pre-wrap;
-  word-break: break-all;
-  overflow-wrap: break-word;
+  opacity: 0.6;
 }
 
-.dense-card-active .dense-card-text {
+.dense-text-assistant {
   color: var(--color-text-secondary);
+}
+
+.dense-card-active .dense-text-user {
+  opacity: 0.7;
+}
+
+.dense-card-active .dense-text-assistant {
+  color: var(--color-text-primary);
+}
+
+.dense-text-waiting {
+  color: var(--color-text-tertiary);
+  opacity: 0.4;
 }
 
 /* Bottom activity pulse line */

@@ -24,12 +24,10 @@ export function DenseSessionCard({ session }: DenseSessionCardProps) {
     }
   }, [session.messages.length]);
 
-  // Build a flat text stream from recent messages
-  const recentText = session.messages
+  // Build recent messages with role info for color coding
+  const recentMessages = session.messages
     .slice(-20)
-    .map((m) => (m.content || '').trim())
-    .filter((t) => t.length > 0)
-    .join('\n');
+    .filter((m) => (m.content || '').trim().length > 0);
 
   const cardClass = [
     'dense-card',
@@ -52,9 +50,15 @@ export function DenseSessionCard({ session }: DenseSessionCardProps) {
         <span className="dense-card-name">{session.name}</span>
       </div>
 
-      {/* Terminal-like text surface */}
+      {/* Terminal-like text surface with role colors */}
       <div className="dense-card-terminal" ref={scrollRef}>
-        <div className="dense-card-text">{recentText || 'Waiting...'}</div>
+        {recentMessages.length > 0 ? (
+          recentMessages.map((m, i) => (
+            <span key={i} className={`dense-text-${m.role}`}>{m.content.trim()}{'\n'}</span>
+          ))
+        ) : (
+          <span className="dense-text-waiting">Waiting...</span>
+        )}
       </div>
 
       {/* Activity indicator */}

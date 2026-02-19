@@ -5,6 +5,7 @@ export interface Message {
 
 export type MessageKind = 'text' | 'tool_call' | 'tool_output';
 export type ThemeMode = 'light' | 'dark';
+export type ViewMode = 'normal' | 'dense';
 export type BreakdownMetric = 'tokens' | 'cost';
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 

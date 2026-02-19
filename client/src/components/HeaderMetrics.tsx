@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { TOOL_DISPLAY_ORDER } from '../constants/tools';
-import type { BreakdownMetric, ConnectionStatus, ThemeMode, UsageTotalsPayload } from '../types/nexus';
+import type { BreakdownMetric, ConnectionStatus, ThemeMode, UsageTotalsPayload, ViewMode } from '../types/nexus';
 import { formatTokens, formatUsd, getToolLabel } from '../utils/formatters';
 import { AnimatedMetricValue } from './AnimatedMetricValue';
 
@@ -9,9 +9,11 @@ interface HeaderMetricsProps {
   usageTotals: UsageTotalsPayload;
   connectionStatus: ConnectionStatus;
   showToolEvents: boolean;
+  viewMode: ViewMode;
   onThemeTogglePointerDown: (event: ReactPointerEvent<HTMLInputElement>) => void;
   onThemeToggleChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onShowToolEventsChange: (checked: boolean) => void;
+  onViewModeChange: (mode: ViewMode) => void;
 }
 
 export function HeaderMetrics({
@@ -19,9 +21,11 @@ export function HeaderMetrics({
   usageTotals,
   connectionStatus,
   showToolEvents,
+  viewMode,
   onThemeTogglePointerDown,
   onThemeToggleChange,
-  onShowToolEventsChange
+  onShowToolEventsChange,
+  onViewModeChange
 }: HeaderMetricsProps) {
   const [hoveredBreakdownMetric, setHoveredBreakdownMetric] = useState<BreakdownMetric | null>(null);
   const [pinnedBreakdownMetric, setPinnedBreakdownMetric] = useState<BreakdownMetric | null>(null);
@@ -180,6 +184,15 @@ export function HeaderMetrics({
       </div>
 
       <div className="header-controls flex items-center gap-6 max-md:w-full max-md:justify-between">
+        <button
+          className={`view-mode-btn ${viewMode === 'dense' ? 'view-mode-btn-active' : ''}`}
+          onClick={() => onViewModeChange(viewMode === 'normal' ? 'dense' : 'normal')}
+          title={viewMode === 'normal' ? 'Switch to dense mode' : 'Switch to normal mode'}
+          aria-label={viewMode === 'normal' ? 'Switch to dense mode' : 'Switch to normal mode'}
+        >
+          {viewMode === 'normal' ? '⊞ Dense' : '⊟ Normal'}
+        </button>
+
         <label className="toggle">
           <input
             type="checkbox"

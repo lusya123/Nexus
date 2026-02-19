@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { TOOL_CONFIG } from '../constants/tools';
 import type { Session } from '../types/nexus';
+import { getMessageKind } from '../utils/message-kind';
 
 interface DenseSessionCardProps {
   session: Session;
+  showToolEvents: boolean;
 }
 
-export function DenseSessionCard({ session }: DenseSessionCardProps) {
+export function DenseSessionCard({ session, showToolEvents }: DenseSessionCardProps) {
   const toolConfig = TOOL_CONFIG[session.tool] || TOOL_CONFIG['claude-code'];
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isEntering, setIsEntering] = useState(true);
@@ -27,7 +29,8 @@ export function DenseSessionCard({ session }: DenseSessionCardProps) {
   // Build recent messages with role info for color coding
   const recentMessages = session.messages
     .slice(-20)
-    .filter((m) => (m.content || '').trim().length > 0);
+    .filter((m) => (m.content || '').trim().length > 0)
+    .filter((m) => showToolEvents || getMessageKind(m.content) === 'text');
 
   const cardClass = [
     'dense-card',

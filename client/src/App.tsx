@@ -38,7 +38,7 @@ function App() {
       ) : (
         <div className="sessions-grid-dense">
           {visibleSessions.map((session) => (
-            <DenseSessionCard key={session.sessionId} session={session} />
+            <DenseSessionCard key={session.sessionId} session={session} showToolEvents={showToolEvents} />
           ))}
         </div>
       )}

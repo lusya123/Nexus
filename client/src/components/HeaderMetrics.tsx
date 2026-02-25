@@ -76,6 +76,7 @@ export function HeaderMetrics({
   }, [orderedTools, usageTotals.byTool]);
 
   const activeBreakdownMetric = pinnedBreakdownMetric ?? hoveredBreakdownMetric;
+  const costPrecision = usageTotals.totals.runningAgents > 0 ? 4 : 2;
 
   const handleBreakdownCardClick = (metric: BreakdownMetric) => {
     setPinnedBreakdownMetric((prev) => (prev === metric ? null : metric));
@@ -158,8 +159,8 @@ export function HeaderMetrics({
             <div className="metric-label">Total Cost (USD)</div>
             <AnimatedMetricValue
               value={usageTotals.totals.totalCostUsd}
-              format={formatUsd}
-              precision={2}
+              format={(value) => formatUsd(value, costPrecision)}
+              precision={costPrecision}
             />
             {activeBreakdownMetric === 'cost' && (
               <div className="metric-hover-breakdown" role="dialog" aria-label="Total cost breakdown by tool">
@@ -167,7 +168,7 @@ export function HeaderMetrics({
                 {toolBreakdown.map((item) => (
                   <div key={`cost-hover-${item.tool}`} className="metric-hover-breakdown-row">
                     <span className="metric-hover-breakdown-label">{item.label}</span>
-                    <span className="metric-hover-breakdown-value">{formatUsd(item.totalCostUsd)}</span>
+                    <span className="metric-hover-breakdown-value">{formatUsd(item.totalCostUsd, costPrecision)}</span>
                   </div>
                 ))}
               </div>

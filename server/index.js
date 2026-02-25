@@ -52,7 +52,8 @@ const EXTERNAL_USAGE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 function getUsageTotals() {
   const base = UsageManager.getUsageTotals();
-  return ExternalUsageService.applyExternalUsageOverrides(base);
+  const live = UsageManager.getLiveUsageTotals();
+  return ExternalUsageService.applyExternalUsageOverrides(base, live);
 }
 
 function broadcastUsageTotals() {

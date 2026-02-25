@@ -376,6 +376,56 @@ export function getUsageTotals() {
   };
 }
 
+export function getLiveUsageTotals() {
+  const byTool = {};
+  for (const tool of DEFAULT_TOOLS) {
+    byTool[tool] = {
+      totalTokens: 0,
+      totalCostUsd: 0,
+      runningAgents: 0
+    };
+  }
+
+  let runningAgents = 0;
+
+  for (const [sessionId, liveInfo] of liveSessions.entries()) {
+    if (!RUNNING_STATES.has(liveInfo?.state)) continue;
+    runningAgents += 1;
+
+    const tool = liveInfo.tool || usageSessions.get(sessionId)?.tool || 'unknown';
+    ensureToolSummary(byTool, tool);
+    byTool[tool].runningAgents += 1;
+
+    const usageSession = usageSessions.get(sessionId);
+    if (!usageSession) continue;
+
+    byTool[tool].totalTokens += Math.round(usageSession.aggregateTokens.totalTokens || 0);
+    byTool[tool].totalCostUsd += roundCost(usageSession.totalCostUsd || 0);
+  }
+
+  const totals = {
+    runningAgents,
+    totalTokens: 0,
+    totalCostUsd: 0
+  };
+
+  for (const summary of Object.values(byTool)) {
+    summary.totalTokens = Math.round(summary.totalTokens || 0);
+    summary.totalCostUsd = roundCost(summary.totalCostUsd || 0);
+    totals.totalTokens += summary.totalTokens;
+    totals.totalCostUsd += summary.totalCostUsd;
+  }
+
+  totals.totalCostUsd = roundCost(totals.totalCostUsd);
+
+  return {
+    scope: 'live_only',
+    totals,
+    byTool,
+    updatedAt
+  };
+}
+
 export function __resetForTests() {
   usageSessions.clear();
   liveSessions.clear();
@@ -386,4 +436,3 @@ export function __resetForTests() {
   };
   updatedAt = Date.now();
 }
-

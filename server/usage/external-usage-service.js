@@ -79,6 +79,10 @@ const FALLBACK_PRICING = {
 let externalUsage = { ...EMPTY_EXTERNAL };
 let refreshPromise = null;
 let lastAttemptAt = 0;
+let externalLiveOverlayBaseline = {
+  externalUpdatedAt: 0,
+  byTool: {}
+};
 
 let pricingState = {
   fetchedAt: 0,
@@ -927,22 +931,77 @@ function cloneUsageTotals(baseTotals) {
   };
 }
 
-export function applyExternalUsageOverrides(baseTotals) {
+export function applyExternalUsageOverrides(baseTotals, liveTotals = null) {
   const merged = cloneUsageTotals(baseTotals);
   if (!merged) return baseTotals;
 
   const current = getExternalUsageSnapshot();
+  const liveByTool = liveTotals && typeof liveTotals === 'object' ? (liveTotals.byTool || {}) : {};
+
+  // Capture the local live-usage baseline when a new external snapshot arrives so we can
+  // overlay only the incremental live delta on top of the external baseline between refreshes.
+  if (Number.isFinite(Number(current.updatedAt)) && Number(current.updatedAt) > 0) {
+    const nextUpdatedAt = Number(current.updatedAt);
+    if (externalLiveOverlayBaseline.externalUpdatedAt !== nextUpdatedAt) {
+      externalLiveOverlayBaseline = {
+        externalUpdatedAt: nextUpdatedAt,
+        byTool: {
+          'claude-code': {
+            totalTokens: Math.round(Number(liveByTool['claude-code']?.totalTokens || 0)),
+            totalCostUsd: roundCost(liveByTool['claude-code']?.totalCostUsd || 0)
+          },
+          codex: {
+            totalTokens: Math.round(Number(liveByTool.codex?.totalTokens || 0)),
+            totalCostUsd: roundCost(liveByTool.codex?.totalCostUsd || 0)
+          }
+        }
+      };
+    }
+  }
+
+  const getLiveDelta = (tool) => {
+    const currentLiveTokens = Math.round(Number(liveByTool[tool]?.totalTokens || 0));
+    const currentLiveCostUsd = roundCost(liveByTool[tool]?.totalCostUsd || 0);
+    const baselineLiveTokens = Math.round(Number(externalLiveOverlayBaseline.byTool?.[tool]?.totalTokens || 0));
+    const baselineLiveCostUsd = roundCost(externalLiveOverlayBaseline.byTool?.[tool]?.totalCostUsd || 0);
+
+    return {
+      totalTokens: Math.max(currentLiveTokens - baselineLiveTokens, 0),
+      totalCostUsd: roundCost(Math.max(currentLiveCostUsd - baselineLiveCostUsd, 0))
+    };
+  };
+
   ensureToolSummary(merged.byTool, 'claude-code');
   ensureToolSummary(merged.byTool, 'codex');
 
   if (current.claudeCode) {
-    merged.byTool['claude-code'].totalTokens = Math.round(current.claudeCode.totalTokens || 0);
-    merged.byTool['claude-code'].totalCostUsd = roundCost(current.claudeCode.totalCostUsd || 0);
+    const liveDelta = getLiveDelta('claude-code');
+    const externalTokensWithLive = Math.round(Number(current.claudeCode.totalTokens || 0)) + liveDelta.totalTokens;
+    const externalCostWithLive = roundCost(Number(current.claudeCode.totalCostUsd || 0) + liveDelta.totalCostUsd);
+
+    merged.byTool['claude-code'].totalTokens = Math.max(
+      Math.round(Number(merged.byTool['claude-code'].totalTokens || 0)),
+      externalTokensWithLive
+    );
+    merged.byTool['claude-code'].totalCostUsd = roundCost(Math.max(
+      roundCost(merged.byTool['claude-code'].totalCostUsd || 0),
+      externalCostWithLive
+    ));
   }
 
   if (current.codex) {
-    merged.byTool.codex.totalTokens = Math.round(current.codex.totalTokens || 0);
-    merged.byTool.codex.totalCostUsd = roundCost(current.codex.totalCostUsd || 0);
+    const liveDelta = getLiveDelta('codex');
+    const externalTokensWithLive = Math.round(Number(current.codex.totalTokens || 0)) + liveDelta.totalTokens;
+    const externalCostWithLive = roundCost(Number(current.codex.totalCostUsd || 0) + liveDelta.totalCostUsd);
+
+    merged.byTool.codex.totalTokens = Math.max(
+      Math.round(Number(merged.byTool.codex.totalTokens || 0)),
+      externalTokensWithLive
+    );
+    merged.byTool.codex.totalCostUsd = roundCost(Math.max(
+      roundCost(merged.byTool.codex.totalCostUsd || 0),
+      externalCostWithLive
+    ));
   }
 
   let totalTokens = 0;

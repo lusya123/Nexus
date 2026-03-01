@@ -23,6 +23,34 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
+function normalizeHistoryLimit(raw, fallback = 200, max = 2000) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const rounded = Math.floor(n);
+  if (rounded <= 0) return fallback;
+  return Math.min(rounded, max);
+}
+
+app.get('/api/usage/cost-history', (req, res) => {
+  try {
+    const limit = normalizeHistoryLimit(req.query.limit);
+    const sessionId = req.query.sessionId ? String(req.query.sessionId) : null;
+    const tool = req.query.tool ? String(req.query.tool) : null;
+    const items = UsageManager.getCostHistory({ limit, sessionId, tool });
+    const meta = UsageManager.getCostHistoryMeta();
+
+    res.json({
+      items,
+      meta
+    });
+  } catch (error) {
+    logger.error('Cost history query failed', { error: error?.message || String(error) });
+    res.status(500).json({
+      error: 'cost_history_query_failed'
+    });
+  }
+});
+
 // Serve static files from dist directory
 app.use(express.static(path.join(__dirname, '..', 'dist')));
 
@@ -79,7 +107,9 @@ function ingestUsageFromLines(lines, parser, toolName, sessionId) {
       sessionId,
       tool: toolName,
       event,
-      calculateCostUsd: PricingService.calculateCostUsd
+      calculateCostUsd: PricingService.calculateCostUsd,
+      calculateCostBreakdown: PricingService.calculateCostBreakdown,
+      getPricingMeta: PricingService.getPricingMeta
     });
     if (applied) changed = true;
   }

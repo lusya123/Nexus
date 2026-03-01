@@ -21,6 +21,7 @@
     "test:codex": "node tests/codex-regression.js",
     "test:usage-parsers": "node tests/usage-parsers-regression.js",
     "test:usage-manager": "node tests/usage-manager-regression.js",
+    "test:pricing-stability": "node tests/pricing-stability-deep-regression.js",
     "test": "node tests/verify-phase1.js"
   },
   "dependencies": {

@@ -168,6 +168,66 @@ run('unknown model has token accumulation but zero computed cost', () => {
   assert.equal(totals.byTool['claude-code'].totalCostUsd, 0);
 });
 
+run('cost history persists pricing-missing audit entries', () => {
+  UsageManager.ingestUsageEvent({
+    sessionId: 'audit-unknown',
+    tool: 'claude-code',
+    event: {
+      kind: 'delta',
+      eventKey: 'evt-1',
+      model: 'totally-unknown-model',
+      tokens: { inputTokens: 200, outputTokens: 100 }
+    },
+    calculateCostUsd: () => null
+  });
+
+  const history = UsageManager.getCostHistory({ limit: 5, sessionId: 'audit-unknown' });
+  assert.equal(history.length, 1);
+  assert.equal(history[0].cost.source, 'pricing_missing');
+  assert.equal(history[0].cost.finalCostUsd, 0);
+  assert.equal(history[0].pricing.pricingFound, false);
+  assert.equal(history[0].event.eventKey, 'evt-1');
+});
+
+run('cost history captures openclaw direct vs computed comparison', () => {
+  UsageManager.ingestUsageEvent({
+    sessionId: 'openclaw-audit',
+    tool: 'openclaw',
+    event: {
+      kind: 'delta',
+      eventKey: 'openclaw-evt',
+      model: 'gpt-5-codex',
+      directCostUsd: 0.003,
+      tokens: { inputTokens: 1000, outputTokens: 100 }
+    },
+    calculateCostUsd: () => 0.002,
+    calculateCostBreakdown: () => ({
+      pricing: {
+        inputPerMillion: 1.25,
+        outputPerMillion: 10,
+        cachedInputPerMillion: 0.125,
+        cacheReadPerMillion: 0.125,
+        cacheWritePerMillion: 1.25
+      },
+      totalCostUsd: 0.002
+    }),
+    getPricingMeta: () => ({
+      fetchedAt: 1700000000000,
+      modelCount: 123
+    })
+  });
+
+  const history = UsageManager.getCostHistory({ limit: 5, tool: 'openclaw' });
+  assert.equal(history.length, 1);
+  assert.equal(history[0].cost.source, 'direct');
+  assert.equal(history[0].cost.directCostUsd, 0.003);
+  assert.equal(history[0].cost.computedCostUsd, 0.002);
+  assert.equal(history[0].cost.directMinusComputedUsd, 0.001);
+  assert.equal(history[0].pricing.pricingFound, true);
+  assert.equal(history[0].pricing.pricingFetchedAt, 1700000000000);
+  assert.equal(history[0].pricing.pricingModelCount, 123);
+});
+
 console.log('---');
 console.log(`Passed: ${passed}`);
 console.log(`Failed: ${failed}`);
@@ -175,4 +235,3 @@ console.log(`Failed: ${failed}`);
 if (failed > 0) {
   process.exit(1);
 }
-

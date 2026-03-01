@@ -79,9 +79,10 @@ const FALLBACK_PRICING = {
 let externalUsage = { ...EMPTY_EXTERNAL };
 let refreshPromise = null;
 let lastAttemptAt = 0;
-let externalLiveOverlayBaseline = {
-  externalUpdatedAt: 0,
-  byTool: {}
+let externalLiveOverlayState = {
+  externalSnapshotKey: '',
+  baselineByTool: {},
+  maxDeltaByTool: {}
 };
 
 let pricingState = {
@@ -931,6 +932,14 @@ function cloneUsageTotals(baseTotals) {
   };
 }
 
+function buildExternalSnapshotKey(snapshot) {
+  const claudeTokens = Math.round(Number(snapshot?.claudeCode?.totalTokens || 0));
+  const claudeCost = roundCost(snapshot?.claudeCode?.totalCostUsd || 0);
+  const codexTokens = Math.round(Number(snapshot?.codex?.totalTokens || 0));
+  const codexCost = roundCost(snapshot?.codex?.totalCostUsd || 0);
+  return `${claudeTokens}:${claudeCost}:${codexTokens}:${codexCost}`;
+}
+
 export function applyExternalUsageOverrides(baseTotals, liveTotals = null) {
   const merged = cloneUsageTotals(baseTotals);
   if (!merged) return baseTotals;
@@ -940,12 +949,12 @@ export function applyExternalUsageOverrides(baseTotals, liveTotals = null) {
 
   // Capture the local live-usage baseline when a new external snapshot arrives so we can
   // overlay only the incremental live delta on top of the external baseline between refreshes.
-  if (Number.isFinite(Number(current.updatedAt)) && Number(current.updatedAt) > 0) {
-    const nextUpdatedAt = Number(current.updatedAt);
-    if (externalLiveOverlayBaseline.externalUpdatedAt !== nextUpdatedAt) {
-      externalLiveOverlayBaseline = {
-        externalUpdatedAt: nextUpdatedAt,
-        byTool: {
+  if (current.claudeCode || current.codex) {
+    const snapshotKey = buildExternalSnapshotKey(current);
+    if (externalLiveOverlayState.externalSnapshotKey !== snapshotKey) {
+      externalLiveOverlayState = {
+        externalSnapshotKey: snapshotKey,
+        baselineByTool: {
           'claude-code': {
             totalTokens: Math.round(Number(liveByTool['claude-code']?.totalTokens || 0)),
             totalCostUsd: roundCost(liveByTool['claude-code']?.totalCostUsd || 0)
@@ -953,6 +962,16 @@ export function applyExternalUsageOverrides(baseTotals, liveTotals = null) {
           codex: {
             totalTokens: Math.round(Number(liveByTool.codex?.totalTokens || 0)),
             totalCostUsd: roundCost(liveByTool.codex?.totalCostUsd || 0)
+          }
+        },
+        maxDeltaByTool: {
+          'claude-code': {
+            totalTokens: 0,
+            totalCostUsd: 0
+          },
+          codex: {
+            totalTokens: 0,
+            totalCostUsd: 0
           }
         }
       };
@@ -962,12 +981,24 @@ export function applyExternalUsageOverrides(baseTotals, liveTotals = null) {
   const getLiveDelta = (tool) => {
     const currentLiveTokens = Math.round(Number(liveByTool[tool]?.totalTokens || 0));
     const currentLiveCostUsd = roundCost(liveByTool[tool]?.totalCostUsd || 0);
-    const baselineLiveTokens = Math.round(Number(externalLiveOverlayBaseline.byTool?.[tool]?.totalTokens || 0));
-    const baselineLiveCostUsd = roundCost(externalLiveOverlayBaseline.byTool?.[tool]?.totalCostUsd || 0);
+    const baselineLiveTokens = Math.round(Number(externalLiveOverlayState.baselineByTool?.[tool]?.totalTokens || 0));
+    const baselineLiveCostUsd = roundCost(externalLiveOverlayState.baselineByTool?.[tool]?.totalCostUsd || 0);
+
+    const rawDeltaTokens = Math.max(currentLiveTokens - baselineLiveTokens, 0);
+    const rawDeltaCostUsd = roundCost(Math.max(currentLiveCostUsd - baselineLiveCostUsd, 0));
+    const previousMaxTokens = Math.round(Number(externalLiveOverlayState.maxDeltaByTool?.[tool]?.totalTokens || 0));
+    const previousMaxCostUsd = roundCost(externalLiveOverlayState.maxDeltaByTool?.[tool]?.totalCostUsd || 0);
+    const stableDeltaTokens = Math.max(rawDeltaTokens, previousMaxTokens);
+    const stableDeltaCostUsd = roundCost(Math.max(rawDeltaCostUsd, previousMaxCostUsd));
+
+    externalLiveOverlayState.maxDeltaByTool[tool] = {
+      totalTokens: stableDeltaTokens,
+      totalCostUsd: stableDeltaCostUsd
+    };
 
     return {
-      totalTokens: Math.max(currentLiveTokens - baselineLiveTokens, 0),
-      totalCostUsd: roundCost(Math.max(currentLiveCostUsd - baselineLiveCostUsd, 0))
+      totalTokens: stableDeltaTokens,
+      totalCostUsd: stableDeltaCostUsd
     };
   };
 
@@ -1030,17 +1061,49 @@ async function refreshExternalUsageInternal() {
   const pricingEntries = await ensurePricingEntries();
   const resolvePricingForEvent = createHistoricalPricingResolver(pricingEntries);
 
-  const [claudeCode, codex] = await Promise.all([
-    computeClaudeCompatibleTotals(resolvePricingForEvent),
-    computeCodexCompatibleTotals(resolvePricingForEvent)
-  ]);
+  const computeSnapshot = async () => {
+    const [claudeCode, codex] = await Promise.all([
+      computeClaudeCompatibleTotals(resolvePricingForEvent),
+      computeCodexCompatibleTotals(resolvePricingForEvent)
+    ]);
 
-  const next = {
-    claudeCode,
-    codex,
-    updatedAt: Date.now(),
-    lastError: null
+    return {
+      claudeCode,
+      codex,
+      updatedAt: Date.now(),
+      lastError: null
+    };
   };
+
+  const isDownwardCorrection = (prev, candidate) => {
+    if (!prev?.claudeCode || !prev?.codex || !candidate?.claudeCode || !candidate?.codex) return false;
+
+    return (
+      Number(candidate.claudeCode.totalTokens || 0) < Number(prev.claudeCode.totalTokens || 0) ||
+      Number(candidate.codex.totalTokens || 0) < Number(prev.codex.totalTokens || 0) ||
+      roundCost(candidate.claudeCode.totalCostUsd || 0) < roundCost(prev.claudeCode.totalCostUsd || 0) ||
+      roundCost(candidate.codex.totalCostUsd || 0) < roundCost(prev.codex.totalCostUsd || 0)
+    );
+  };
+
+  let next = await computeSnapshot();
+
+  // Allow downward corrections only when a second full pass confirms them.
+  // This prevents transient partial scans from producing incorrect drops.
+  if (isDownwardCorrection(externalUsage, next)) {
+    const recheck = await computeSnapshot();
+    if (isDownwardCorrection(externalUsage, recheck)) {
+      next = recheck;
+    } else {
+      logger.warn('External usage downward correction not confirmed; keep previous snapshot', {
+        prevClaudeCostUsd: externalUsage.claudeCode?.totalCostUsd,
+        prevCodexCostUsd: externalUsage.codex?.totalCostUsd,
+        candidateClaudeCostUsd: next.claudeCode?.totalCostUsd,
+        candidateCodexCostUsd: next.codex?.totalCostUsd
+      });
+      return false;
+    }
+  }
 
   const changed =
     !externalUsage.claudeCode ||
@@ -1112,6 +1175,11 @@ export function __resetForTests() {
   externalUsage = { ...EMPTY_EXTERNAL };
   refreshPromise = null;
   lastAttemptAt = 0;
+  externalLiveOverlayState = {
+    externalSnapshotKey: '',
+    baselineByTool: {},
+    maxDeltaByTool: {}
+  };
   pricingState = {
     fetchedAt: 0,
     entries: normalizePricingEntries(FALLBACK_PRICING)

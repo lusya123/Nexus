@@ -307,29 +307,74 @@ export function getModelPricing(modelName) {
   return null;
 }
 
-export function calculateCostUsd(modelName, tokens = {}) {
+function normalizeCostTokens(tokens = {}) {
+  return {
+    inputTokens: Number(tokens.inputTokens || 0),
+    outputTokens: Number(tokens.outputTokens || 0),
+    cachedInputTokens: Number(tokens.cachedInputTokens || 0),
+    cacheReadInputTokens: Number(tokens.cacheReadInputTokens || 0),
+    cacheCreationInputTokens: Number(tokens.cacheCreationInputTokens || 0),
+    cacheWriteTokens: Number(tokens.cacheWriteTokens || 0),
+    reasoningOutputTokens: Number(tokens.reasoningOutputTokens || 0),
+    totalTokens: Number(tokens.totalTokens || 0)
+  };
+}
+
+export function calculateCostBreakdown(modelName, tokens = {}) {
   const pricing = getModelPricing(modelName);
   if (!pricing) return null;
 
-  const inputTokens = Number(tokens.inputTokens || 0);
-  const outputTokens = Number(tokens.outputTokens || 0);
-  const cachedInputTokens = Number(tokens.cachedInputTokens || 0);
-  const cacheReadInputTokens = Number(tokens.cacheReadInputTokens || 0);
-  const cacheCreationInputTokens = Number(tokens.cacheCreationInputTokens || 0);
-  const cacheWriteTokens = Number(tokens.cacheWriteTokens || 0);
+  const normalizedTokens = normalizeCostTokens(tokens);
+  const {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    cacheReadInputTokens,
+    cacheCreationInputTokens,
+    cacheWriteTokens
+  } = normalizedTokens;
 
-  let total = 0;
-  total += (inputTokens * pricing.inputPerMillion) / 1_000_000;
-  total += (outputTokens * pricing.outputPerMillion) / 1_000_000;
+  const inputUsd = (inputTokens * pricing.inputPerMillion) / 1_000_000;
+  const outputUsd = (outputTokens * pricing.outputPerMillion) / 1_000_000;
 
   const cachedInputRate = pricing.cachedInputPerMillion || pricing.cacheReadPerMillion || 0;
-  total += (cachedInputTokens * cachedInputRate) / 1_000_000;
+  const cachedInputUsd = (cachedInputTokens * cachedInputRate) / 1_000_000;
+  const cacheReadRate = pricing.cacheReadPerMillion || cachedInputRate || 0;
+  const cacheWriteRate = pricing.cacheWritePerMillion || pricing.inputPerMillion || 0;
 
-  total += (cacheReadInputTokens * (pricing.cacheReadPerMillion || cachedInputRate || 0)) / 1_000_000;
-  total += (cacheCreationInputTokens * (pricing.cacheWritePerMillion || pricing.inputPerMillion || 0)) / 1_000_000;
-  total += (cacheWriteTokens * (pricing.cacheWritePerMillion || pricing.inputPerMillion || 0)) / 1_000_000;
+  const cacheReadUsd = (cacheReadInputTokens * cacheReadRate) / 1_000_000;
+  const cacheCreationUsd = (cacheCreationInputTokens * cacheWriteRate) / 1_000_000;
+  const cacheWriteUsd = (cacheWriteTokens * cacheWriteRate) / 1_000_000;
 
-  return Number.isFinite(total) ? total : null;
+  const total = inputUsd + outputUsd + cachedInputUsd + cacheReadUsd + cacheCreationUsd + cacheWriteUsd;
+  if (!Number.isFinite(total)) return null;
+
+  return {
+    model: String(modelName || ''),
+    tokens: normalizedTokens,
+    pricing: {
+      inputPerMillion: pricing.inputPerMillion || 0,
+      outputPerMillion: pricing.outputPerMillion || 0,
+      cachedInputPerMillion: cachedInputRate,
+      cacheReadPerMillion: cacheReadRate,
+      cacheWritePerMillion: cacheWriteRate,
+      reasoningOutputPerMillion: pricing.reasoningOutputPerMillion || 0
+    },
+    componentsUsd: {
+      inputUsd,
+      outputUsd,
+      cachedInputUsd,
+      cacheReadUsd,
+      cacheCreationUsd,
+      cacheWriteUsd
+    },
+    totalCostUsd: total
+  };
+}
+
+export function calculateCostUsd(modelName, tokens = {}) {
+  const breakdown = calculateCostBreakdown(modelName, tokens);
+  return breakdown ? breakdown.totalCostUsd : null;
 }
 
 export function getPricingMeta() {

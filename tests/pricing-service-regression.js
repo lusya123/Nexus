@@ -80,6 +80,21 @@ run('calculateCostUsd produces non-zero claude cost offline', () => {
   assert.equal(cost > 0, true);
 });
 
+run('calculateCostBreakdown returns rates and component totals', () => {
+  const breakdown = PricingService.calculateCostBreakdown('gpt-5-codex', {
+    inputTokens: 1_000_000,
+    outputTokens: 100_000,
+    cachedInputTokens: 200_000
+  });
+
+  assert.equal(Boolean(breakdown), true);
+  assert.equal(typeof breakdown.totalCostUsd, 'number');
+  assert.equal(breakdown.totalCostUsd > 0, true);
+  assert.equal(breakdown.pricing.inputPerMillion, 1.25);
+  assert.equal(breakdown.pricing.outputPerMillion, 10);
+  assert.equal(typeof breakdown.componentsUsd.inputUsd, 'number');
+});
+
 await runAsync('refreshPricingInBackground accepts LiteLLM token-cost fields', async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => ({

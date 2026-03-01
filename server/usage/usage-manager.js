@@ -1,3 +1,5 @@
+import * as CostHistoryStore from './cost-history-store.js';
+
 const usageSessions = new Map();
 const liveSessions = new Map();
 
@@ -26,7 +28,8 @@ function ensureUsageSession(sessionId, tool) {
       snapshot: null,
       deltaEvents: new Map(),
       aggregateTokens: zeroTokens(),
-      totalCostUsd: 0
+      totalCostUsd: 0,
+      costAudit: null
     });
   }
 
@@ -105,6 +108,11 @@ function tokensEqual(a, b) {
 }
 
 function recomputeSession(session, calculateCostUsd) {
+  const computeAudit = () => {
+    const computed = calculateCostUsd ? calculateCostUsd(session.model, session.aggregateTokens) : null;
+    return Number.isFinite(computed) ? Number(computed) : null;
+  };
+
   if (session.snapshot) {
     const snapshot = session.snapshot;
     const totalTokens = snapshot.totalTokens !== null
@@ -122,8 +130,13 @@ function recomputeSession(session, calculateCostUsd) {
       totalTokens
     };
 
-    const computed = calculateCostUsd ? calculateCostUsd(session.model, session.aggregateTokens) : null;
+    const computed = computeAudit();
     session.totalCostUsd = Number.isFinite(computed) ? computed : 0;
+    session.costAudit = {
+      source: Number.isFinite(computed) ? 'computed' : 'pricing_missing',
+      computedCostUsd: computed,
+      directCostUsd: null
+    };
     return;
   }
 
@@ -150,13 +163,24 @@ function recomputeSession(session, calculateCostUsd) {
 
   session.aggregateTokens = aggregate;
 
+  const computed = computeAudit();
+
   if (session.tool === 'openclaw' && hasDirectCost) {
     session.totalCostUsd = directCostUsd;
+    session.costAudit = {
+      source: 'direct',
+      computedCostUsd: computed,
+      directCostUsd
+    };
     return;
   }
 
-  const computed = calculateCostUsd ? calculateCostUsd(session.model, session.aggregateTokens) : null;
   session.totalCostUsd = Number.isFinite(computed) ? computed : 0;
+  session.costAudit = {
+    source: Number.isFinite(computed) ? 'computed' : 'pricing_missing',
+    computedCostUsd: computed,
+    directCostUsd: hasDirectCost ? directCostUsd : null
+  };
 }
 
 function markUpdated() {
@@ -179,7 +203,91 @@ function ensureToolSummary(byTool, tool) {
   }
 }
 
-export function ingestUsageEvent({ sessionId, tool, event, calculateCostUsd }) {
+function cloneTokens(tokens) {
+  if (!tokens || typeof tokens !== 'object') return null;
+  return {
+    inputTokens: toTokenNumber(tokens.inputTokens),
+    outputTokens: toTokenNumber(tokens.outputTokens),
+    cachedInputTokens: toTokenNumber(tokens.cachedInputTokens),
+    cacheReadInputTokens: toTokenNumber(tokens.cacheReadInputTokens),
+    cacheCreationInputTokens: toTokenNumber(tokens.cacheCreationInputTokens),
+    cacheWriteTokens: toTokenNumber(tokens.cacheWriteTokens),
+    reasoningOutputTokens: toTokenNumber(tokens.reasoningOutputTokens),
+    totalTokens: toTokenNumber(tokens.totalTokens)
+  };
+}
+
+function buildHistoryPricing(pricingMeta, calculateCostBreakdown, model, tokens) {
+  const out = {
+    pricingFound: false,
+    pricingFetchedAt: Number.isFinite(Number(pricingMeta?.fetchedAt)) ? Number(pricingMeta.fetchedAt) : null,
+    pricingModelCount: Number.isFinite(Number(pricingMeta?.modelCount)) ? Number(pricingMeta.modelCount) : null,
+    ratesPerMillion: null
+  };
+
+  if (!calculateCostBreakdown || !model) return out;
+
+  try {
+    const breakdown = calculateCostBreakdown(model, tokens);
+    if (!breakdown || typeof breakdown !== 'object') return out;
+    if (!breakdown.pricing || typeof breakdown.pricing !== 'object') return out;
+
+    out.pricingFound = true;
+    out.ratesPerMillion = { ...breakdown.pricing };
+    return out;
+  } catch {
+    return out;
+  }
+}
+
+function appendSessionCostHistory(session, event, pricingMeta, calculateCostBreakdown) {
+  const computedCost = Number.isFinite(Number(session.costAudit?.computedCostUsd))
+    ? roundCost(session.costAudit.computedCostUsd)
+    : null;
+  const directCost = Number.isFinite(Number(session.costAudit?.directCostUsd))
+    ? roundCost(session.costAudit.directCostUsd)
+    : null;
+  const finalCost = roundCost(session.totalCostUsd || 0);
+  const delta = (computedCost !== null && directCost !== null)
+    ? roundCost(directCost - computedCost)
+    : null;
+
+  const pricing = buildHistoryPricing(
+    pricingMeta,
+    calculateCostBreakdown,
+    session.model,
+    session.aggregateTokens
+  );
+
+  CostHistoryStore.appendCostHistoryEntry({
+    recordedAt: Date.now(),
+    sessionId: session.sessionId,
+    tool: session.tool,
+    model: session.model,
+    event: {
+      kind: event?.kind || null,
+      eventKey: event?.eventKey || null
+    },
+    tokens: cloneTokens(session.aggregateTokens),
+    cost: {
+      source: session.costAudit?.source || 'unknown',
+      finalCostUsd: finalCost,
+      computedCostUsd: computedCost,
+      directCostUsd: directCost,
+      directMinusComputedUsd: delta
+    },
+    pricing
+  });
+}
+
+export function ingestUsageEvent({
+  sessionId,
+  tool,
+  event,
+  calculateCostUsd,
+  calculateCostBreakdown = null,
+  getPricingMeta = null
+}) {
   if (!sessionId || !tool || !event || typeof event !== 'object') return false;
 
   const session = ensureUsageSession(sessionId, tool);
@@ -239,6 +347,12 @@ export function ingestUsageEvent({ sessionId, tool, event, calculateCostUsd }) {
     prevModel !== session.model
   ) {
     markUpdated();
+    appendSessionCostHistory(
+      session,
+      event,
+      typeof getPricingMeta === 'function' ? getPricingMeta() : null,
+      calculateCostBreakdown
+    );
     return true;
   }
 
@@ -426,6 +540,14 @@ export function getLiveUsageTotals() {
   };
 }
 
+export function getCostHistory({ limit = 200, sessionId = null, tool = null } = {}) {
+  return CostHistoryStore.getCostHistory({ limit, sessionId, tool });
+}
+
+export function getCostHistoryMeta() {
+  return CostHistoryStore.getCostHistoryMeta();
+}
+
 export function __resetForTests() {
   usageSessions.clear();
   liveSessions.clear();
@@ -435,4 +557,5 @@ export function __resetForTests() {
     totalFiles: 0
   };
   updatedAt = Date.now();
+  CostHistoryStore.__resetForTests();
 }

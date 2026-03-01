@@ -64,6 +64,144 @@ run('applyExternalUsageOverrides replaces claude/codex totals only', () => {
   assert.equal(merged.totals.totalCostUsd, 20.75);
 });
 
+run('live overlay baseline does not reset when only external updatedAt changes', () => {
+  const base = {
+    scope: 'all_history',
+    totals: {
+      runningAgents: 1,
+      totalTokens: 1000,
+      totalCostUsd: 30
+    },
+    byTool: {
+      codex: { totalTokens: 100, totalCostUsd: 10, runningAgents: 1 },
+      'claude-code': { totalTokens: 100, totalCostUsd: 10, runningAgents: 0 },
+      openclaw: { totalTokens: 100, totalCostUsd: 10, runningAgents: 0 }
+    },
+    backfill: { status: 'done', scannedFiles: 1, totalFiles: 1 },
+    updatedAt: 123
+  };
+
+  const liveA = {
+    byTool: {
+      codex: { totalTokens: 100, totalCostUsd: 80, runningAgents: 1 },
+      'claude-code': { totalTokens: 50, totalCostUsd: 40, runningAgents: 0 }
+    }
+  };
+  const liveB = {
+    byTool: {
+      codex: { totalTokens: 160, totalCostUsd: 130, runningAgents: 1 },
+      'claude-code': { totalTokens: 100, totalCostUsd: 70, runningAgents: 0 }
+    }
+  };
+
+  ExternalUsageService.__setExternalUsageForTests({
+    claudeCode: { totalTokens: 3900, totalCostUsd: 2450, source: 'ccusage' },
+    codex: { totalTokens: 4900, totalCostUsd: 2550, source: '@ccusage/codex' },
+    updatedAt: 1000
+  });
+
+  ExternalUsageService.applyExternalUsageOverrides(base, liveA);
+  const withDelta = ExternalUsageService.applyExternalUsageOverrides(base, liveB);
+
+  ExternalUsageService.__setExternalUsageForTests({
+    claudeCode: { totalTokens: 3900, totalCostUsd: 2450, source: 'ccusage' },
+    codex: { totalTokens: 4900, totalCostUsd: 2550, source: '@ccusage/codex' },
+    updatedAt: 2000
+  });
+
+  const afterTimestampOnlyRefresh = ExternalUsageService.applyExternalUsageOverrides(base, liveB);
+  assert.equal(afterTimestampOnlyRefresh.byTool.codex.totalCostUsd, withDelta.byTool.codex.totalCostUsd);
+  assert.equal(
+    afterTimestampOnlyRefresh.byTool['claude-code'].totalCostUsd,
+    withDelta.byTool['claude-code'].totalCostUsd
+  );
+});
+
+run('live overlay delta stays monotonic within same external snapshot', () => {
+  const base = {
+    scope: 'all_history',
+    totals: {
+      runningAgents: 1,
+      totalTokens: 1000,
+      totalCostUsd: 30
+    },
+    byTool: {
+      codex: { totalTokens: 100, totalCostUsd: 10, runningAgents: 1 },
+      'claude-code': { totalTokens: 100, totalCostUsd: 10, runningAgents: 0 },
+      openclaw: { totalTokens: 100, totalCostUsd: 10, runningAgents: 0 }
+    },
+    backfill: { status: 'done', scannedFiles: 1, totalFiles: 1 },
+    updatedAt: 123
+  };
+
+  ExternalUsageService.__setExternalUsageForTests({
+    claudeCode: { totalTokens: 3900, totalCostUsd: 2450, source: 'ccusage' },
+    codex: { totalTokens: 4900, totalCostUsd: 2550, source: '@ccusage/codex' },
+    updatedAt: 1000
+  });
+
+  ExternalUsageService.applyExternalUsageOverrides(base, {
+    byTool: {
+      codex: { totalTokens: 100, totalCostUsd: 80, runningAgents: 1 },
+      'claude-code': { totalTokens: 50, totalCostUsd: 40, runningAgents: 0 }
+    }
+  });
+
+  const high = ExternalUsageService.applyExternalUsageOverrides(base, {
+    byTool: {
+      codex: { totalTokens: 200, totalCostUsd: 160, runningAgents: 1 },
+      'claude-code': { totalTokens: 120, totalCostUsd: 90, runningAgents: 0 }
+    }
+  });
+
+  const lowerLive = ExternalUsageService.applyExternalUsageOverrides(base, {
+    byTool: {
+      codex: { totalTokens: 150, totalCostUsd: 120, runningAgents: 1 },
+      'claude-code': { totalTokens: 90, totalCostUsd: 70, runningAgents: 0 }
+    }
+  });
+
+  assert.equal(lowerLive.totals.totalCostUsd, high.totals.totalCostUsd);
+  assert.equal(lowerLive.byTool.codex.totalCostUsd, high.byTool.codex.totalCostUsd);
+  assert.equal(lowerLive.byTool['claude-code'].totalCostUsd, high.byTool['claude-code'].totalCostUsd);
+});
+
+run('all-history totals can correct downward when external snapshot is lower', () => {
+  const base = {
+    scope: 'all_history',
+    totals: {
+      runningAgents: 1,
+      totalTokens: 1000,
+      totalCostUsd: 100
+    },
+    byTool: {
+      codex: { totalTokens: 100, totalCostUsd: 20, runningAgents: 1 },
+      'claude-code': { totalTokens: 100, totalCostUsd: 70, runningAgents: 0 },
+      openclaw: { totalTokens: 100, totalCostUsd: 10, runningAgents: 0 }
+    },
+    backfill: { status: 'done', scannedFiles: 1, totalFiles: 1 },
+    updatedAt: 123
+  };
+
+  ExternalUsageService.__setExternalUsageForTests({
+    claudeCode: { totalTokens: 5000, totalCostUsd: 2000, source: 'ccusage' },
+    codex: { totalTokens: 5000, totalCostUsd: 1000, source: '@ccusage/codex' },
+    updatedAt: 1000
+  });
+  const high = ExternalUsageService.applyExternalUsageOverrides(base, { byTool: {} });
+
+  ExternalUsageService.__setExternalUsageForTests({
+    claudeCode: { totalTokens: 4000, totalCostUsd: 1500, source: 'ccusage' },
+    codex: { totalTokens: 4000, totalCostUsd: 900, source: '@ccusage/codex' },
+    updatedAt: 2000
+  });
+  const lower = ExternalUsageService.applyExternalUsageOverrides(base, { byTool: {} });
+
+  assert.equal(lower.totals.totalCostUsd < high.totals.totalCostUsd, true);
+  assert.equal(lower.byTool['claude-code'].totalCostUsd < high.byTool['claude-code'].totalCostUsd, true);
+  assert.equal(lower.byTool.codex.totalCostUsd < high.byTool.codex.totalCostUsd, true);
+});
+
 console.log('---');
 console.log(`Passed: ${passed}`);
 console.log(`Failed: ${failed}`);

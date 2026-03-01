@@ -179,9 +179,61 @@ interface UsageTotals {
 
 ## 4. HTTP
 
-当前后端仅提供：
+当前后端提供：
 
 - 静态资源服务（`dist/`）
 - WebSocket 实时通道
+- `GET /api/usage/cost-history`：查询计费历史审计记录（append-only）
 
-不提供稳定公开的 REST API。
+`GET /api/usage/cost-history` 支持查询参数：
+
+- `limit`：返回条数，默认 `200`，最大 `2000`
+- `sessionId`：按会话过滤（可选）
+- `tool`：按工具过滤（可选，例：`codex` / `claude-code` / `openclaw`）
+
+返回示例：
+
+```json
+{
+  "items": [
+    {
+      "sequence": 1024,
+      "recordedAt": 1771225000123,
+      "sessionId": "abc123",
+      "tool": "openclaw",
+      "model": "gpt-5-codex",
+      "event": { "kind": "delta", "eventKey": "msg_8" },
+      "tokens": {
+        "inputTokens": 1200,
+        "outputTokens": 220,
+        "cachedInputTokens": 0,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningOutputTokens": 0,
+        "totalTokens": 1420
+      },
+      "cost": {
+        "source": "direct",
+        "finalCostUsd": 0.0032,
+        "computedCostUsd": 0.0029,
+        "directCostUsd": 0.0032,
+        "directMinusComputedUsd": 0.0003
+      },
+      "pricing": {
+        "pricingFound": true,
+        "pricingFetchedAt": 1771221000000,
+        "pricingModelCount": 1800,
+        "ratesPerMillion": {
+          "inputPerMillion": 1.25,
+          "outputPerMillion": 10
+        }
+      }
+    }
+  ],
+  "meta": {
+    "path": "/path/to/repo/.nexus-runtime/usage-cost-history.jsonl",
+    "totalRecords": 2048
+  }
+}
+```

@@ -239,6 +239,187 @@
   font-family: 'Space Mono', monospace;
 }
 
+.usage-breakdown {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  padding: 20px 24px 4px;
+}
+
+.usage-breakdown-toggle {
+  display: flex;
+  justify-content: flex-start;
+  padding: 14px 24px 0;
+}
+
+.usage-breakdown-toggle-btn {
+  border: 2px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.usage-breakdown-toggle-btn:hover {
+  border-color: var(--color-border-light);
+}
+
+.usage-breakdown-card {
+  border: 2px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.usage-breakdown-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-secondary);
+  font-family: 'Space Mono', monospace;
+}
+
+.usage-chart-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.usage-chart {
+  width: 100%;
+  height: auto;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+}
+
+.usage-chart-grid {
+  stroke: var(--color-border);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.usage-chart-axis {
+  fill: var(--color-text-tertiary);
+  font-size: 10px;
+  font-family: 'Space Mono', monospace;
+}
+
+.usage-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.usage-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-family: 'Space Mono', monospace;
+}
+
+.usage-chart-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.usage-pie-wrap {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.usage-pie-chart {
+  width: 230px;
+  height: 230px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+}
+
+.usage-pie-total-label {
+  fill: var(--color-text-tertiary);
+  font-size: 11px;
+  font-family: 'Space Mono', monospace;
+  text-transform: uppercase;
+}
+
+.usage-pie-total-value {
+  fill: var(--color-text-primary);
+  font-size: 14px;
+  font-family: 'Space Mono', monospace;
+  font-weight: 700;
+}
+
+.usage-pie-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.usage-pie-legend-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.usage-pie-legend-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-pie-legend-number {
+  color: var(--color-text-primary);
+}
+
+.usage-pie-legend-percent {
+  color: var(--color-text-tertiary);
+}
+
+.usage-breakdown-grids {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.usage-breakdown-grid {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+  padding: 8px 10px;
+}
+
+.usage-breakdown-subtitle {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
+  font-family: 'Space Mono', monospace;
+  margin-bottom: 6px;
+}
+
+.usage-breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  padding: 2px 0;
+}
+
 .toggle {
   display: inline-flex;
   align-items: center;
@@ -347,6 +528,28 @@
     grid-template-columns: 1fr;
     padding: 24px;
     gap: 24px;
+  }
+
+  .usage-breakdown {
+    grid-template-columns: 1fr;
+    padding: 20px;
+  }
+
+  .usage-breakdown-toggle {
+    padding: 20px 20px 0;
+  }
+
+  .usage-pie-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  .usage-pie-chart {
+    width: 100%;
+    height: auto;
+  }
+
+  .usage-breakdown-grids {
+    grid-template-columns: 1fr;
   }
 }
 

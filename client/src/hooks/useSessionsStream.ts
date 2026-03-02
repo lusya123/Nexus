@@ -11,6 +11,11 @@ function createEmptyUsageTotals(): UsageTotalsPayload {
       totalCostUsd: 0
     },
     byTool: {},
+    detailed: {
+      daily: [],
+      byModel: [],
+      dailyByModel: []
+    },
     backfill: {
       status: 'done',
       scannedFiles: 0,
@@ -131,6 +136,11 @@ export function useSessionsStream() {
           totalCostUsd: Number(message.totals?.totalCostUsd || 0)
         },
         byTool: message.byTool || {},
+        detailed: {
+          daily: Array.isArray(message.detailed?.daily) ? message.detailed.daily : [],
+          byModel: Array.isArray(message.detailed?.byModel) ? message.detailed.byModel : [],
+          dailyByModel: Array.isArray(message.detailed?.dailyByModel) ? message.detailed.dailyByModel : []
+        },
         backfill: {
           status: message.backfill?.status || 'done',
           scannedFiles: Number(message.backfill?.scannedFiles || 0),

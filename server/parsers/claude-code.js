@@ -4,6 +4,19 @@ import os from 'os';
 // Claude Code projects directory
 export const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 
+function toTimestampMs(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value >= 1e12 ? value : value * 1000;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+}
+
 // Parse Claude Code JSONL message
 export function parseMessage(line) {
   try {
@@ -62,7 +75,15 @@ export function parseUsageEvent(line) {
     const eventKey = message.id || obj.uuid;
     if (!eventKey) return null;
 
-    return {
+    const timestampMs = toTimestampMs(
+      obj.timestamp
+      ?? obj.created_at
+      ?? message.timestamp
+      ?? message.created_at
+      ?? message.createdAt
+    );
+
+    const out = {
       kind: 'delta',
       eventKey: String(eventKey),
       model: message.model ? String(message.model) : null,
@@ -73,6 +94,12 @@ export function parseUsageEvent(line) {
         cacheCreationInputTokens: Number(usage.cache_creation_input_tokens || 0)
       }
     };
+
+    if (timestampMs !== null) {
+      out.timestampMs = timestampMs;
+    }
+
+    return out;
   } catch {
     return null;
   }

@@ -129,6 +129,52 @@ run('openclaw parser extracts usage and direct cost', () => {
   });
 });
 
+run('parsers attach timestampMs when timestamp exists', () => {
+  const codexLine = JSON.stringify({
+    type: 'event_msg',
+    timestamp: '2026-03-01T10:00:00Z',
+    payload: {
+      type: 'token_count',
+      info: {
+        total_token_usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          total_tokens: 2
+        }
+      }
+    }
+  });
+
+  const claudeLine = JSON.stringify({
+    timestamp: '2026-03-01T11:00:00Z',
+    message: {
+      id: 'msg_1',
+      model: 'claude-sonnet-4',
+      usage: {
+        input_tokens: 1,
+        output_tokens: 1
+      }
+    }
+  });
+
+  const openclawLine = JSON.stringify({
+    type: 'message',
+    timestamp: '2026-03-01T12:00:00Z',
+    message: {
+      id: 'msg_2',
+      model: 'gpt-5',
+      usage: {
+        input: 1,
+        output: 1
+      }
+    }
+  });
+
+  assert.equal(parseCodexUsage(codexLine)?.timestampMs, Date.parse('2026-03-01T10:00:00Z'));
+  assert.equal(parseClaudeUsage(claudeLine)?.timestampMs, Date.parse('2026-03-01T11:00:00Z'));
+  assert.equal(parseOpenClawUsage(openclawLine)?.timestampMs, Date.parse('2026-03-01T12:00:00Z'));
+});
+
 run('openclaw project name prefers session cwd basename over agent folder', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-openclaw-'));
   const sessionPath = path.join(tmpDir, 'session.jsonl');

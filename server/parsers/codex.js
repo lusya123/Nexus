@@ -4,6 +4,19 @@ import os from 'os';
 // Codex sessions 目录
 export const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
 
+function toTimestampMs(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value >= 1e12 ? value : value * 1000;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+}
+
 function safeSnippet(s, maxLen = 140) {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim();
   if (!t) return '';
@@ -134,7 +147,14 @@ export function parseUsageEvent(line) {
       const usage = obj.payload?.info?.total_token_usage;
       if (!usage || typeof usage !== 'object') return null;
 
-      return {
+      const timestampMs = toTimestampMs(
+        obj.timestamp
+        ?? obj.created_at
+        ?? obj.createdAt
+        ?? obj.payload?.timestamp
+      );
+
+      const out = {
         kind: 'snapshot',
         tokens: {
           inputTokens: Number(usage.input_tokens || 0),
@@ -144,6 +164,12 @@ export function parseUsageEvent(line) {
           totalTokens: Number.isFinite(Number(usage.total_tokens)) ? Number(usage.total_tokens) : null
         }
       };
+
+      if (timestampMs !== null) {
+        out.timestampMs = timestampMs;
+      }
+
+      return out;
     }
 
     return null;

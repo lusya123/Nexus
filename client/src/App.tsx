@@ -3,6 +3,7 @@ import './App.css';
 import { DenseSessionCard } from './components/DenseSessionCard';
 import { HeaderMetrics } from './components/HeaderMetrics';
 import { SessionCard } from './components/SessionCard';
+import { UsageBreakdownPanel } from './components/UsageBreakdownPanel';
 import { useDisplayedSessions } from './hooks/useDisplayedSessions';
 import { useSessionsStream } from './hooks/useSessionsStream';
 import { useThemeMode } from './hooks/useThemeMode';
@@ -28,6 +29,8 @@ function App() {
         onShowToolEventsChange={setShowToolEvents}
         onViewModeChange={setViewMode}
       />
+
+      <UsageBreakdownPanel usageTotals={usageTotals} />
 
       {viewMode === 'normal' ? (
         <div className="sessions-grid">

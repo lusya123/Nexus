@@ -33,6 +33,31 @@ export interface UsageToolSummary {
   runningAgents: number;
 }
 
+export interface UsageDailyPoint {
+  date: string;
+  totalTokens: number;
+  totalCostUsd: number;
+}
+
+export interface UsageModelPoint {
+  model: string;
+  totalTokens: number;
+  totalCostUsd: number;
+}
+
+export interface UsageDailyModelPoint {
+  date: string;
+  model: string;
+  totalTokens: number;
+  totalCostUsd: number;
+}
+
+export interface UsageDetailedBreakdown {
+  daily: UsageDailyPoint[];
+  byModel: UsageModelPoint[];
+  dailyByModel: UsageDailyModelPoint[];
+}
+
 export interface UsageTotalsPayload {
   scope: 'all_history';
   totals: {
@@ -41,6 +66,7 @@ export interface UsageTotalsPayload {
     totalCostUsd: number;
   };
   byTool: Record<string, UsageToolSummary>;
+  detailed: UsageDetailedBreakdown;
   backfill: {
     status: 'running' | 'done';
     scannedFiles: number;
@@ -63,6 +89,7 @@ export interface ServerMessage {
   scope?: UsageTotalsPayload['scope'];
   totals?: UsageTotalsPayload['totals'];
   byTool?: UsageTotalsPayload['byTool'];
+  detailed?: UsageTotalsPayload['detailed'];
   backfill?: UsageTotalsPayload['backfill'];
   updatedAt?: number;
 }

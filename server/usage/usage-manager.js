@@ -2,9 +2,13 @@ import * as CostHistoryStore from './cost-history-store.js';
 
 const usageSessions = new Map();
 const liveSessions = new Map();
+const usageDaily = new Map();
+const usageByModel = new Map();
+const usageDailyByModel = new Map();
 
 const DEFAULT_TOOLS = ['codex', 'claude-code', 'openclaw'];
 const RUNNING_STATES = new Set(['active', 'idle']);
+const DAILY_MODEL_KEY_SEP = '\u0001';
 
 let backfill = {
   status: 'done',
@@ -193,6 +197,116 @@ function roundCost(value) {
   return Number(n.toFixed(6));
 }
 
+function toTimestampMs(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value >= 1e12 ? value : value * 1000;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+}
+
+function toDayKey(timestampMs) {
+  const ts = toTimestampMs(timestampMs) ?? Date.now();
+  const d = new Date(ts);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function normalizeModelName(model) {
+  const raw = model === null || model === undefined ? '' : String(model).trim();
+  return raw || 'unknown';
+}
+
+function applyMetricDelta(map, key, tokensDelta, costDelta) {
+  if (!Number.isFinite(tokensDelta) && !Number.isFinite(costDelta)) return;
+  const safeTokensDelta = Number.isFinite(tokensDelta) ? tokensDelta : 0;
+  const safeCostDelta = Number.isFinite(costDelta) ? costDelta : 0;
+  if (safeTokensDelta === 0 && safeCostDelta === 0) return;
+
+  const current = map.get(key) || { totalTokens: 0, totalCostUsd: 0 };
+  const nextTokens = Math.max(0, current.totalTokens + safeTokensDelta);
+  const nextCost = roundCost(Math.max(0, current.totalCostUsd + safeCostDelta));
+  if (nextTokens === 0 && nextCost === 0) {
+    map.delete(key);
+    return;
+  }
+
+  map.set(key, {
+    totalTokens: nextTokens,
+    totalCostUsd: nextCost
+  });
+}
+
+function applyDetailedUsageDelta({ dayKey, model, tokensDelta, costDelta }) {
+  if (!Number.isFinite(tokensDelta) && !Number.isFinite(costDelta)) return;
+  const roundedTokensDelta = Math.round(Number(tokensDelta) || 0);
+  const roundedCostDelta = roundCost(Number(costDelta) || 0);
+  if (roundedTokensDelta === 0 && roundedCostDelta === 0) return;
+
+  applyMetricDelta(usageDaily, dayKey, roundedTokensDelta, roundedCostDelta);
+  applyMetricDelta(usageByModel, model, roundedTokensDelta, roundedCostDelta);
+  applyMetricDelta(
+    usageDailyByModel,
+    `${dayKey}${DAILY_MODEL_KEY_SEP}${model}`,
+    roundedTokensDelta,
+    roundedCostDelta
+  );
+}
+
+function buildDetailedUsage() {
+  const daily = Array.from(usageDaily.entries())
+    .map(([date, value]) => ({
+      date,
+      totalTokens: Math.round(Number(value?.totalTokens || 0)),
+      totalCostUsd: roundCost(value?.totalCostUsd || 0)
+    }))
+    .filter((item) => item.totalTokens > 0 || item.totalCostUsd > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const byModel = Array.from(usageByModel.entries())
+    .map(([model, value]) => ({
+      model,
+      totalTokens: Math.round(Number(value?.totalTokens || 0)),
+      totalCostUsd: roundCost(value?.totalCostUsd || 0)
+    }))
+    .filter((item) => item.totalTokens > 0 || item.totalCostUsd > 0)
+    .sort((a, b) => {
+      if (b.totalTokens !== a.totalTokens) return b.totalTokens - a.totalTokens;
+      if (b.totalCostUsd !== a.totalCostUsd) return b.totalCostUsd - a.totalCostUsd;
+      return a.model.localeCompare(b.model);
+    });
+
+  const dailyByModel = Array.from(usageDailyByModel.entries())
+    .map(([compoundKey, value]) => {
+      const [date, model] = String(compoundKey).split(DAILY_MODEL_KEY_SEP);
+      return {
+        date,
+        model,
+        totalTokens: Math.round(Number(value?.totalTokens || 0)),
+        totalCostUsd: roundCost(value?.totalCostUsd || 0)
+      };
+    })
+    .filter((item) => item.totalTokens > 0 || item.totalCostUsd > 0)
+    .sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      if (b.totalTokens !== a.totalTokens) return b.totalTokens - a.totalTokens;
+      return a.model.localeCompare(b.model);
+    });
+
+  return {
+    daily,
+    byModel,
+    dailyByModel
+  };
+}
+
 function ensureToolSummary(byTool, tool) {
   if (!byTool[tool]) {
     byTool[tool] = {
@@ -340,6 +454,17 @@ export function ingestUsageEvent({
   if (!changed) return false;
 
   recomputeSession(session, calculateCostUsd);
+  const tokensDelta = Number(session.aggregateTokens?.totalTokens || 0) - Number(prevTokens?.totalTokens || 0);
+  const costDelta = Number(session.totalCostUsd || 0) - Number(prevCost || 0);
+  const isUsageEvent = event?.kind === 'snapshot' || event?.kind === 'delta';
+  if (isUsageEvent && (tokensDelta !== 0 || costDelta !== 0)) {
+    applyDetailedUsageDelta({
+      dayKey: toDayKey(event?.timestampMs),
+      model: normalizeModelName(event?.model || session.model),
+      tokensDelta,
+      costDelta
+    });
+  }
 
   if (
     !tokensEqual(prevTokens, session.aggregateTokens) ||
@@ -485,6 +610,7 @@ export function getUsageTotals() {
     scope: 'all_history',
     totals,
     byTool,
+    detailed: buildDetailedUsage(),
     backfill: { ...backfill },
     updatedAt
   };
@@ -551,6 +677,9 @@ export function getCostHistoryMeta() {
 export function __resetForTests() {
   usageSessions.clear();
   liveSessions.clear();
+  usageDaily.clear();
+  usageByModel.clear();
+  usageDailyByModel.clear();
   backfill = {
     status: 'done',
     scannedFiles: 0,

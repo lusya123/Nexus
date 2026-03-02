@@ -32,6 +32,14 @@ function fakeCost(model, tokens) {
   return total / 1_000_000;
 }
 
+function toLocalDayKey(timestampMs) {
+  const date = new Date(timestampMs);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 run('snapshot mode keeps max codex snapshot', () => {
   const sessionId = 'codex-session';
   const tool = 'codex';
@@ -226,6 +234,50 @@ run('cost history captures openclaw direct vs computed comparison', () => {
   assert.equal(history[0].pricing.pricingFound, true);
   assert.equal(history[0].pricing.pricingFetchedAt, 1700000000000);
   assert.equal(history[0].pricing.pricingModelCount, 123);
+});
+
+run('detailed usage aggregates by day and model', () => {
+  const ts1 = Date.parse('2026-03-01T11:00:00Z');
+  const ts2 = Date.parse('2026-03-02T09:30:00Z');
+  const day1 = toLocalDayKey(ts1);
+  const day2 = toLocalDayKey(ts2);
+
+  UsageManager.ingestUsageEvent({
+    sessionId: 'detail-s1',
+    tool: 'claude-code',
+    event: {
+      kind: 'delta',
+      eventKey: 'evt-1',
+      model: 'claude-sonnet-4',
+      timestampMs: ts1,
+      tokens: { inputTokens: 100, outputTokens: 20 }
+    },
+    calculateCostUsd: fakeCost
+  });
+
+  UsageManager.ingestUsageEvent({
+    sessionId: 'detail-s2',
+    tool: 'codex',
+    event: {
+      kind: 'delta',
+      eventKey: 'evt-2',
+      model: 'gpt-5',
+      timestampMs: ts2,
+      tokens: { inputTokens: 60, outputTokens: 40 }
+    },
+    calculateCostUsd: fakeCost
+  });
+
+  const totals = UsageManager.getUsageTotals();
+  const dayMap = new Map(totals.detailed.daily.map((item) => [item.date, item]));
+  const modelMap = new Map(totals.detailed.byModel.map((item) => [item.model, item]));
+
+  assert.equal(dayMap.get(day1)?.totalTokens, 120);
+  assert.equal(dayMap.get(day2)?.totalTokens, 100);
+  assert.equal(modelMap.get('claude-sonnet-4')?.totalTokens, 120);
+  assert.equal(modelMap.get('gpt-5')?.totalTokens, 100);
+  assert.equal(modelMap.get('claude-sonnet-4')?.totalCostUsd, 0.00012);
+  assert.equal(modelMap.get('gpt-5')?.totalCostUsd, 0.0001);
 });
 
 console.log('---');

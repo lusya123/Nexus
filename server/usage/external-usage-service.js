@@ -927,6 +927,13 @@ function cloneUsageTotals(baseTotals) {
       totalCostUsd: roundCost(baseTotals.totals?.totalCostUsd || 0)
     },
     byTool,
+    detailed: {
+      daily: Array.isArray(baseTotals.detailed?.daily) ? baseTotals.detailed.daily.map((item) => ({ ...item })) : [],
+      byModel: Array.isArray(baseTotals.detailed?.byModel) ? baseTotals.detailed.byModel.map((item) => ({ ...item })) : [],
+      dailyByModel: Array.isArray(baseTotals.detailed?.dailyByModel)
+        ? baseTotals.detailed.dailyByModel.map((item) => ({ ...item }))
+        : []
+    },
     backfill: { ...(baseTotals.backfill || {}) },
     updatedAt: baseTotals.updatedAt || Date.now()
   };

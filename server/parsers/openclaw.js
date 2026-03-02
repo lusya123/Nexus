@@ -5,6 +5,19 @@ import fs from 'fs';
 // OpenClaw agents 目录
 export const OPENCLAW_AGENTS_DIR = path.join(os.homedir(), '.openclaw', 'agents');
 
+function toTimestampMs(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value >= 1e12 ? value : value * 1000;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+}
+
 function readFilePrefix(filePath, maxBytes = 64 * 1024) {
   try {
     const fd = fs.openSync(filePath, 'r');
@@ -151,7 +164,16 @@ export function parseUsageEvent(line) {
 
     const costTotal = usage?.cost?.total;
 
-    return {
+    const timestampMs = toTimestampMs(
+      obj.timestamp
+      ?? obj.created_at
+      ?? obj.createdAt
+      ?? message.timestamp
+      ?? message.created_at
+      ?? message.createdAt
+    );
+
+    const out = {
       kind: 'delta',
       eventKey: String(eventKey),
       model: message.model ? String(message.model) : null,
@@ -166,6 +188,12 @@ export function parseUsageEvent(line) {
           : undefined
       }
     };
+
+    if (timestampMs !== null) {
+      out.timestampMs = timestampMs;
+    }
+
+    return out;
   } catch {
     return null;
   }

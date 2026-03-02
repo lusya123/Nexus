@@ -3,6 +3,8 @@ import { promisify } from 'util';
 import path from 'path';
 
 const execAsync = promisify(exec);
+const PROCESS_SCAN_COMMAND_TIMEOUT_MS = Number(process.env.NEXUS_PROCESS_SCAN_TIMEOUT_MS || 1200);
+const PROCESS_SCAN_MAX_BUFFER = 1024 * 1024;
 
 // Track active processes (PID -> project directory)
 const activeProcesses = new Map();
@@ -43,11 +45,31 @@ export function matchesToolProcessCommand(command, toolName) {
   return re.test(String(command || ''));
 }
 
+async function runCommand(command, timeout = PROCESS_SCAN_COMMAND_TIMEOUT_MS) {
+  try {
+    const { stdout } = await execAsync(command, {
+      timeout,
+      maxBuffer: PROCESS_SCAN_MAX_BUFFER
+    });
+    return stdout || '';
+  } catch {
+    return '';
+  }
+}
+
+function parseCwdFromLsofFn(lsofOutput) {
+  const line = String(lsofOutput || '')
+    .split('\n')
+    .find((item) => item.startsWith('n'));
+  return line ? line.slice(1).trim() : '';
+}
+
 // Scan for active Claude Code processes
 export async function scanProcesses(toolName, projectsDir, encodeCwdFn) {
   try {
     // Use `ps` directly and filter in JS; grep-based matching misses path-style commands.
-    const { stdout } = await execAsync('ps -axo pid=,command=');
+    const stdout = await runCommand('ps -axo pid=,command=');
+    if (!stdout) return new Map();
     const lines = (stdout || '').split('\n').filter(line => line.trim());
 
     const newProcesses = new Map();
@@ -62,30 +84,26 @@ export async function scanProcesses(toolName, projectsDir, encodeCwdFn) {
       if (!matchesToolProcessCommand(command, toolName)) continue;
 
       try {
-        // Get working directory for this process
-        const { stdout: lsofOutput } = await execAsync(`lsof -p ${pid} 2>/dev/null | grep cwd`);
-        const cwdMatch = lsofOutput.match(/cwd\s+DIR\s+\S+\s+\S+\s+\S+\s+(.+)$/m);
+        // Read cwd using lsof -Fn to avoid grep pipes and keep timeout control.
+        const lsofCwdOutput = await runCommand(`lsof -a -p ${pid} -d cwd -Fn 2>/dev/null`);
+        const cwd = parseCwdFromLsofFn(lsofCwdOutput);
+        if (!cwd) continue;
 
-        if (cwdMatch) {
-          const cwd = cwdMatch[1].trim();
-          const encodedCwd = encodeCwdFn(cwd);
-          const projectDir = path.resolve(path.join(projectsDir, encodedCwd));
+        const encodedCwd = encodeCwdFn(cwd);
+        const projectDir = path.resolve(path.join(projectsDir, encodedCwd));
 
-          let sessionFiles = [];
-          try {
-            const { stdout: lsofNames } = await execAsync(`lsof -p ${pid} -Fn 2>/dev/null || true`);
-            sessionFiles = extractOpenJsonlFilesFromLsof(lsofNames, { restrictUnderDir: projectDir });
-          } catch {
-            // ignore
-          }
+        let sessionFiles = [];
+        const lsofNames = await runCommand(`lsof -p ${pid} -Fn 2>/dev/null`);
+        if (lsofNames) {
+          sessionFiles = extractOpenJsonlFilesFromLsof(lsofNames, { restrictUnderDir: projectDir });
+        }
 
-          newProcesses.set(pid, { cwd, projectDir, toolName, sessionFiles });
+        newProcesses.set(pid, { cwd, projectDir, toolName, sessionFiles });
 
-          // If this is a new process, log it
-          if (!activeProcesses.has(pid)) {
-            console.log(`Process detected: PID ${pid} → ${cwd}`);
-            console.log(`  Project dir: ${projectDir}`);
-          }
+        // If this is a new process, log it
+        if (!activeProcesses.has(pid)) {
+          console.log(`Process detected: PID ${pid} → ${cwd}`);
+          console.log(`  Project dir: ${projectDir}`);
         }
       } catch (error) {
         // Process might have exited or lsof failed

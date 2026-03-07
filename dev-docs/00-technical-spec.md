@@ -6,6 +6,7 @@
 > - 已支持 `claude-code` / `codex` / `openclaw`
 > - 进程扫描周期为 15 秒，空闲检测周期为 30 秒
 > - 增加了 `server/usage/*` 与 `usage_totals` 实时推送
+> - **端口配置**：生产模式统一使用 7878，开发模式前端 5173 + 后端 7878
 
 ## 一、这是什么
 
@@ -459,7 +460,7 @@ function readIncremental(filePath) {
 
 **测试步骤**：
 1. 启动服务端：`node server/index.js`
-2. 浏览器访问 `http://localhost:7878`（或配置的端口）
+2. 浏览器访问 `http://localhost:7878`
 3. 打开浏览器开发者工具，查看 WebSocket 连接状态
 4. 验证 WebSocket 连接成功建立
 

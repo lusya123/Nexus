@@ -6,12 +6,13 @@
 
 - 已新增 `server/usage/` 体系：`usage-manager.js`、`pricing-service.js`、`external-usage-service.js`。
 - WebSocket 除会话消息外，已增加 `usage_totals` 持续推送。
-- Claude/Codex/OpenClaw 的活跃发现策略已升级为“进程信号 + 最近修改文件兜底”混合模式。
+- Claude/Codex/OpenClaw 的活跃发现策略已升级为”进程信号 + 最近修改文件兜底”混合模式。
 - OpenClaw 活跃识别已使用 `.jsonl.lock` + mtime 双信号。
 - 状态与调度周期以代码常量为准：
   - 进程扫描：15 秒
   - 空闲检测：30 秒
   - 外部用量刷新：5 分钟
+- **端口配置**：生产模式统一使用 7878，开发模式前端 5173 + 后端 7878
 
 ## 一、背景与目标
 
@@ -672,7 +673,7 @@ nexus logs backend | rg -i "process"
 
 **打开浏览器**:
 
-访问 http://localhost:5173
+访问 http://localhost:5173（开发模式前端）或 http://localhost:7878（生产模式）
 
 **验证点**:
 1. 不同工具的卡片颜色不同
